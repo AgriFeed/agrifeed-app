@@ -104,6 +104,17 @@ export function createApp(env: IndexerEnv, pool: Pool): express.Express {
       [symbol],
     );
 
+    const submissions = await pool.query<{
+      node_address: string;
+      price: string;
+      source_ts: string;
+      tx_hash: string;
+    }>(
+      `SELECT node_address, price, source_ts, tx_hash FROM node_submissions
+       WHERE symbol = $1 ORDER BY source_ts DESC LIMIT 100`,
+      [symbol],
+    );
+
     res.json({
       symbol,
       decimals: commodity.rows[0]?.decimals,
@@ -112,6 +123,12 @@ export function createApp(env: IndexerEnv, pool: Pool): express.Express {
         price: r.price,
         timestamp: r.price_timestamp,
         contributingNodes: r.contributing_nodes,
+        txHash: r.tx_hash,
+      })),
+      submissions: submissions.rows.map((r) => ({
+        nodeAddress: r.node_address,
+        price: r.price,
+        timestamp: r.source_ts,
         txHash: r.tx_hash,
       })),
     });
