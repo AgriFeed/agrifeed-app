@@ -36,11 +36,19 @@ export interface CommodityFinalization {
   txHash: string;
 }
 
+export interface CommoditySubmission {
+  nodeAddress: string;
+  price: string;
+  timestamp: string;
+  txHash: string;
+}
+
 export interface CommodityHistory {
   symbol: string;
   decimals: number;
   history: CommodityHistoryPoint[];
   finalizations: CommodityFinalization[];
+  submissions: CommoditySubmission[];
 }
 
 export interface OracleNode {
