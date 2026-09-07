@@ -1,0 +1,91 @@
+-- AgriFeed indexer schema. Every statement is idempotent so migrate.ts can
+-- be run repeatedly against a fresh or existing database.
+
+CREATE TABLE IF NOT EXISTS commodities (
+  symbol TEXT PRIMARY KEY,
+  decimals INTEGER NOT NULL,
+  resolution INTEGER NOT NULL,
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- One row per on-chain price record returned by prices()/lastprice(). The
+-- contract price is an i128, so it is stored as TEXT and never cast to a
+-- Postgres numeric/double type that could silently lose precision.
+CREATE TABLE IF NOT EXISTS price_history (
+  id BIGSERIAL PRIMARY KEY,
+  symbol TEXT NOT NULL REFERENCES commodities(symbol),
+  price TEXT NOT NULL,
+  price_timestamp TIMESTAMPTZ NOT NULL,
+  inserted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (symbol, price_timestamp)
+);
+
+CREATE INDEX IF NOT EXISTS price_history_symbol_ts_idx
+  ON price_history (symbol, price_timestamp DESC);
+
+-- Authorized oracle nodes, reconstructed from add_node / remove_node calls.
+-- This table is only ever populated by real on-chain events; it starts
+-- empty and stays empty until the oracle contract is deployed and
+-- ORACLE_CONTRACT_ID is configured.
+CREATE TABLE IF NOT EXISTS nodes (
+  address TEXT PRIMARY KEY,
+  added_at TIMESTAMPTZ NOT NULL,
+  added_at_ledger BIGINT NOT NULL,
+  removed_at TIMESTAMPTZ,
+  removed_at_ledger BIGINT
+);
+
+-- One row per submit_price call attributed to a node, used to compute each
+-- node's submission count and uptime on the /nodes page.
+CREATE TABLE IF NOT EXISTS node_submissions (
+  id BIGSERIAL PRIMARY KEY,
+  node_address TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  price TEXT NOT NULL,
+  source_ts TIMESTAMPTZ NOT NULL,
+  ledger BIGINT NOT NULL,
+  tx_hash TEXT NOT NULL,
+  inserted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (tx_hash)
+);
+
+CREATE INDEX IF NOT EXISTS node_submissions_node_idx
+  ON node_submissions (node_address, source_ts DESC);
+CREATE INDEX IF NOT EXISTS node_submissions_symbol_idx
+  ON node_submissions (symbol, source_ts DESC);
+
+-- One row per finalize_price call: which node submissions fed into a given
+-- finalized price, so /commodity/[symbol] can show exactly which nodes
+-- contributed, never just a count.
+CREATE TABLE IF NOT EXISTS price_finalizations (
+  id BIGSERIAL PRIMARY KEY,
+  symbol TEXT NOT NULL,
+  price TEXT NOT NULL,
+  price_timestamp TIMESTAMPTZ NOT NULL,
+  ledger BIGINT NOT NULL,
+  tx_hash TEXT NOT NULL,
+  contributing_nodes TEXT[] NOT NULL,
+  inserted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (tx_hash)
+);
+
+-- AgriPriceFloor has no on-chain getter for its own state (see
+-- packages/sdk/src/pricefloor.ts getState), so the indexer is the only
+-- place that reconstructs it, from initialize/fund/settle/cancel events.
+CREATE TABLE IF NOT EXISTS pricefloor_events (
+  id BIGSERIAL PRIMARY KEY,
+  contract_id TEXT NOT NULL,
+  event_type TEXT NOT NULL CHECK (event_type IN ('initialize', 'fund', 'settle', 'cancel')),
+  ledger BIGINT NOT NULL,
+  tx_hash TEXT NOT NULL,
+  data JSONB NOT NULL,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (tx_hash, event_type)
+);
+
+-- Cursor bookkeeping so poll.ts resumes getEvents from where it left off
+-- instead of re-scanning the whole retention window every tick.
+CREATE TABLE IF NOT EXISTS indexer_cursor (
+  id TEXT PRIMARY KEY,
+  last_ledger BIGINT NOT NULL
+);
