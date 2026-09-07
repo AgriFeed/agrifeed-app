@@ -60,6 +60,20 @@ interface EventCursorRow {
   last_ledger: string;
 }
 
+/**
+ * How far back a fresh cursor is allowed to start from. `getHealth()`'s
+ * `oldestLedger` reflects ledger/state retention, not this RPC's actual
+ * events index: confirmed empirically against soroban-testnet.stellar.org
+ * on 2026-09-07 that `getEvents` silently returns zero events (not an
+ * error) once `startLedger` is too far behind latest, well before
+ * `oldestLedger` and even though matching events exist inside that wider
+ * range. Binary search pinned the actual wall between 10,000 (works) and
+ * 12,000 (returns nothing) ledgers back; 9,000 leaves margin below that
+ * measured boundary. Pick a value here, not `oldestLedger`, for a fresh
+ * cursor's starting point.
+ */
+const FRESH_CURSOR_LOOKBACK_LEDGERS = 9000;
+
 async function loadStartLedger(
   server: StellarRpc.Server,
   pool: Pool,
@@ -71,7 +85,8 @@ async function loadStartLedger(
     return { cursor: result.rows[0].last_ledger };
   }
   const health = await server.getHealth();
-  return { startLedger: health.oldestLedger };
+  const startLedger = Math.max(health.oldestLedger, health.latestLedger - FRESH_CURSOR_LOOKBACK_LEDGERS);
+  return { startLedger };
 }
 
 async function saveCursor(pool: Pool, cursor: string): Promise<void> {
@@ -133,23 +148,32 @@ async function handleEvent(
   event: StellarRpc.Api.EventResponse,
   pool: Pool,
 ): Promise<void> {
-  const [fnTopic] = event.topic;
-  if (!fnTopic) return;
-  const fnName = asString(scValToNative(fnTopic));
+  // `#[contractevent]` publishes topic[0] as the snake_case event name
+  // (from the struct name: NodeAdded -> "node_added", PriceSubmitted ->
+  // "price_submitted"), not the function name ("add_node", "submit_price").
+  // Confirmed against real events on 2026-09-07; matching on the function
+  // name here previously meant these cases never fired at all.
+  const topics = event.topic.map((t) => scValToNative(t));
+  const fnName = asString(topics[0]);
   if (!fnName) return;
 
+  // Fields declared `#[topic]` on the event struct live in `event.topic`
+  // (after the name), in struct declaration order; only the remaining,
+  // non-topic fields are in `event.value`. Confirmed against a real
+  // PriceSubmitted event: topics = [name, asset, node], value = {price}.
   const value = scValToNative(event.value);
+  const body = toRecord(value) ?? {};
   const ledgerTime = new Date(event.ledgerClosedAt);
 
   switch (fnName) {
-    case "add_node":
-    case "remove_node": {
-      const address = asString(value) ?? asString(toRecord(value)?.node) ?? asString(toRecord(value)?.address);
+    case "node_added":
+    case "node_removed": {
+      const address = asString(topics[1]);
       if (!address) {
         logger.warn(`unrecognized ${fnName} event shape`, { txHash: event.txHash });
         return;
       }
-      if (fnName === "add_node") {
+      if (fnName === "node_added") {
         await pool.query(
           `INSERT INTO nodes (address, added_at, added_at_ledger)
            VALUES ($1, $2, $3)
@@ -165,46 +189,60 @@ async function handleEvent(
       return;
     }
 
-    case "submit_price": {
-      const record = toRecord(value);
-      const node = asString(record ? pick(record, "node", "address") : null);
-      const symbol = asString(record ? pick(record, "asset", "symbol") : null);
-      const price = asString(record ? pick(record, "price") : null);
-      const sourceTs = asBigInt(record ? pick(record, "source_ts", "sourceTs", "timestamp") : null);
-      if (!node || !symbol || !price || sourceTs === null) {
-        logger.warn("unrecognized submit_price event shape", { txHash: event.txHash });
+    case "price_submitted": {
+      // topics: [name, asset, node]; value: {price}. PriceSubmitted carries
+      // no source_ts (see agrifeed-contract's lib.rs), so the ledger's own
+      // close time is used as source_ts here instead.
+      const assetTopic = topics[1];
+      const symbol = Array.isArray(assetTopic) ? asString(assetTopic[1]) : null;
+      const node = asString(topics[2]);
+      const price = asBigInt(pick(body, "price"))?.toString() ?? null;
+      if (!node || !symbol || !price) {
+        logger.warn("unrecognized price_submitted event shape", { txHash: event.txHash });
         return;
       }
       await pool.query(
         `INSERT INTO node_submissions (node_address, symbol, price, source_ts, ledger, tx_hash)
-         VALUES ($1, $2, $3, to_timestamp($4), $5, $6)
+         VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (tx_hash) DO NOTHING`,
-        [node, symbol, price, Number(sourceTs), event.ledger, event.txHash],
+        [node, symbol, price, ledgerTime.toISOString(), event.ledger, event.txHash],
       );
       return;
     }
 
-    case "finalize_price": {
-      const record = toRecord(value);
-      const symbol = asString(record ? pick(record, "asset", "symbol") : null);
-      const price = asString(record ? pick(record, "price") : null);
-      const timestamp = asBigInt(record ? pick(record, "timestamp") : null);
-      const contributors = record ? pick(record, "nodes", "contributors") : null;
-      const nodeList =
-        Array.isArray(contributors) ? contributors.filter((n): n is string => typeof n === "string") : [];
+    case "price_finalized": {
+      // topics: [name, asset]; value: {price, timestamp}.
+      const assetTopic = topics[1];
+      const symbol = Array.isArray(assetTopic) ? asString(assetTopic[1]) : null;
+      const price = asBigInt(pick(body, "price"))?.toString() ?? null;
+      const timestamp = asBigInt(pick(body, "timestamp"));
       if (!symbol || !price || timestamp === null) {
-        logger.warn("unrecognized finalize_price event shape", { txHash: event.txHash });
+        logger.warn("unrecognized price_finalized event shape", { txHash: event.txHash });
         return;
       }
+      // PriceFinalized carries only {asset, price, timestamp}, agrifeed-contract
+      // emits no contributor list on this event, so contributing_nodes is not
+      // derivable here. The API layer (server.ts /commodities) reconstructs it
+      // from node_submissions instead; this column is kept only as a record of
+      // that limitation, not filled in from the event.
       await pool.query(
         `INSERT INTO price_finalizations (symbol, price, price_timestamp, ledger, tx_hash, contributing_nodes)
          VALUES ($1, $2, to_timestamp($3), $4, $5, $6)
          ON CONFLICT (tx_hash) DO NOTHING`,
-        [symbol, price, Number(timestamp), event.ledger, event.txHash, nodeList],
+        [symbol, price, Number(timestamp), event.ledger, event.txHash, []],
       );
       return;
     }
 
+    // NOTE: unlike the node_added/price_submitted/price_finalized cases
+    // above, the event names below have NOT been verified against a real
+    // AgriPriceFloor deployment in this pass, they are still the function
+    // names, not confirmed snake_case event names, since fixing them was
+    // out of scope for the oracle ticker this pass covers. Given the
+    // pattern just found and fixed above (event name = snake_case(struct
+    // name), e.g. Initialized -> "initialized", Funded -> "funded"), these
+    // are likely wrong in the same way and should be checked against a
+    // live pricefloor deal's real events before relying on this table.
     case "initialize":
     case "fund":
     case "settle":

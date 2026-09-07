@@ -84,8 +84,12 @@ CREATE TABLE IF NOT EXISTS pricefloor_events (
 );
 
 -- Cursor bookkeeping so poll.ts resumes getEvents from where it left off
--- instead of re-scanning the whole retention window every tick.
+-- instead of re-scanning the whole retention window every tick. Despite the
+-- column's name, this is the opaque pagination cursor getEvents() returns
+-- (e.g. "0019085056546963455-4294967295"), not a bare ledger sequence
+-- number, so it must be TEXT: it does not fit, and is not meant to be
+-- parsed as, a BIGINT.
 CREATE TABLE IF NOT EXISTS indexer_cursor (
   id TEXT PRIMARY KEY,
-  last_ledger BIGINT NOT NULL
+  last_ledger TEXT NOT NULL
 );

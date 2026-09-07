@@ -15,7 +15,7 @@ import type { Asset, OracleConfig, PriceData } from "./types.js";
  * Read calls never sign or submit, so this account does not need to exist
  * on-chain or hold any funds.
  */
-const SIMULATION_ACCOUNT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+const SIMULATION_ACCOUNT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
 function assetToScVal(asset: Asset): xdr.ScVal {
   return xdr.ScVal.scvVec([
@@ -24,6 +24,25 @@ function assetToScVal(asset: Asset): xdr.ScVal {
       ? nativeToScVal(asset.values[0], { type: "address" })
       : nativeToScVal(asset.values[0], { type: "symbol" }),
   ]);
+}
+
+/**
+ * `scValToNative()` has no notion of this SDK's `{tag, values}` convention
+ * for a contract union: it decodes `Asset`'s two-element vec (tag symbol,
+ * payload) as a bare native tuple, e.g. `["Other", "COCOA"]`. Confirmed
+ * against a live `assets()` simulation, not assumed. Every read path that
+ * can return an `Asset` must go through this before being handed back as
+ * `Asset`, or callers silently get a shapeless array typed as `Asset`.
+ */
+function nativeToAsset(native: unknown): Asset {
+  if (!Array.isArray(native) || native.length !== 2) {
+    throw new OracleError(`unexpected Asset shape from scValToNative: ${JSON.stringify(native)}`);
+  }
+  const [tag, value] = native as [unknown, unknown];
+  if (tag === "Stellar" || tag === "Other") {
+    return { tag, values: [value as string] } as Asset;
+  }
+  throw new OracleError(`unknown Asset tag "${String(tag)}"`);
 }
 
 function scValToPriceData(val: xdr.ScVal | undefined): PriceData | null {
@@ -74,13 +93,13 @@ async function simulateReadCall(
 export async function base(config: OracleConfig): Promise<Asset> {
   const ret = await simulateReadCall(config, "base", []);
   if (!ret) throw new OracleError("base() returned no value");
-  return scValToNative(ret) as Asset;
+  return nativeToAsset(scValToNative(ret));
 }
 
 export async function assets(config: OracleConfig): Promise<Asset[]> {
   const ret = await simulateReadCall(config, "assets", []);
   if (!ret) return [];
-  return scValToNative(ret) as Asset[];
+  return (scValToNative(ret) as unknown[]).map(nativeToAsset);
 }
 
 export async function decimals(config: OracleConfig): Promise<number> {

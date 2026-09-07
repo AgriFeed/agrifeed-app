@@ -9,7 +9,7 @@ interface CommodityRow {
   latest_price: string | null;
   latest_price_timestamp: string | null;
   previous_price: string | null;
-  contributing_nodes: string[] | null;
+  nodes_reporting: number;
 }
 
 interface NodeRow {
@@ -37,6 +37,14 @@ export function createApp(env: IndexerEnv, pool: Pool): express.Express {
     );
     const totalNodes = Number(totalNodesResult.rows[0]?.count ?? 0);
 
+    // PriceFinalized carries only {asset, price, timestamp}, the contract
+    // emits no contributor list (see agrifeed-contract's lib.rs), so
+    // "which nodes reported" cannot come from price_finalizations. It is
+    // reconstructed instead from node_submissions: finalize_price folds in
+    // every pending submission since the previous finalize and clears them
+    // atomically, so the contributing set for the latest finalization is
+    // exactly the distinct nodes that submitted in the ledger range
+    // (previous finalization's ledger, latest finalization's ledger].
     const result = await pool.query<CommodityRow>(`
       SELECT
         c.symbol,
@@ -44,7 +52,7 @@ export function createApp(env: IndexerEnv, pool: Pool): express.Express {
         latest.price AS latest_price,
         latest.price_timestamp AS latest_price_timestamp,
         previous.price AS previous_price,
-        finalized.contributing_nodes
+        coalesce(reporting.reporting_count, 0) AS nodes_reporting
       FROM commodities c
       LEFT JOIN LATERAL (
         SELECT price, price_timestamp FROM price_history
@@ -55,9 +63,21 @@ export function createApp(env: IndexerEnv, pool: Pool): express.Express {
         WHERE symbol = c.symbol ORDER BY price_timestamp DESC OFFSET 1 LIMIT 1
       ) previous ON true
       LEFT JOIN LATERAL (
-        SELECT contributing_nodes FROM price_finalizations
-        WHERE symbol = c.symbol ORDER BY price_timestamp DESC LIMIT 1
-      ) finalized ON true
+        SELECT ledger FROM price_finalizations
+        WHERE symbol = c.symbol ORDER BY ledger DESC LIMIT 1
+      ) latest_final ON true
+      LEFT JOIN LATERAL (
+        SELECT ledger FROM price_finalizations
+        WHERE symbol = c.symbol AND ledger < latest_final.ledger
+        ORDER BY ledger DESC LIMIT 1
+      ) prev_final ON true
+      LEFT JOIN LATERAL (
+        SELECT count(DISTINCT node_address)::int AS reporting_count
+        FROM node_submissions
+        WHERE symbol = c.symbol
+          AND ledger <= latest_final.ledger
+          AND ledger > coalesce(prev_final.ledger, 0)
+      ) reporting ON latest_final.ledger IS NOT NULL
       ORDER BY c.symbol ASC
     `);
 
@@ -68,7 +88,7 @@ export function createApp(env: IndexerEnv, pool: Pool): express.Express {
         price: row.latest_price,
         priceTimestamp: row.latest_price_timestamp,
         previousPrice: row.previous_price,
-        nodesReporting: row.contributing_nodes?.length ?? 0,
+        nodesReporting: row.nodes_reporting,
         nodesTotal: totalNodes,
         sourceAvailable: row.latest_price !== null,
       })),
