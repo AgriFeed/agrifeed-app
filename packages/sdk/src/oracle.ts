@@ -27,7 +27,7 @@ function assetToScVal(asset: Asset): xdr.ScVal {
 }
 
 function scValToPriceData(val: xdr.ScVal | undefined): PriceData | null {
-  if (!val || val.switch().name === "scvVoid") return null;
+  if (!val || val.type === "scvVoid") return null;
   const native = scValToNative(val);
   if (native === null || native === undefined) return null;
   return {
@@ -116,7 +116,7 @@ export async function prices(
     assetToScVal(asset),
     nativeToScVal(records, { type: "u32" }),
   ]);
-  if (!ret || ret.switch().name === "scvVoid") return null;
+  if (!ret || ret.type === "scvVoid") return null;
   const native = scValToNative(ret) as Array<{ price: bigint; timestamp: bigint | number }>;
   return native.map((p) => ({
     price: p.price.toString(),

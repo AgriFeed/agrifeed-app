@@ -55,9 +55,7 @@ async function invokeAndConfirm(
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const result = await server.getTransaction(hash);
     if (result.status === StellarRpc.Api.GetTransactionStatus.SUCCESS) {
-      return result.resultMetaXdr
-        ? result.resultMetaXdr.v3().sorobanMeta()?.returnValue()
-        : undefined;
+      return result.returnValue;
     }
     if (result.status === StellarRpc.Api.GetTransactionStatus.FAILED) {
       throw new OracleError(`${method} transaction failed on-chain: ${hash}`);

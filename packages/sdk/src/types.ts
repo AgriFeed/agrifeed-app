@@ -39,7 +39,7 @@ export interface FormattedPrice {
 export class OracleError extends Error {
   constructor(
     message: string,
-    public readonly cause?: unknown,
+    public override readonly cause?: unknown,
   ) {
     super(message);
     this.name = "OracleError";
@@ -55,7 +55,7 @@ export class SourceUnavailableError extends Error {
   constructor(
     public readonly source: string,
     message: string,
-    public readonly cause?: unknown,
+    public override readonly cause?: unknown,
   ) {
     super(`[${source}] ${message}`);
     this.name = "SourceUnavailableError";
