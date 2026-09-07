@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-void text-ink-primary font-sans;
+  }
+
+  ::selection {
+    @apply bg-accent/30 text-ink-primary;
+  }
+}
+
+@layer components {
+  /* The signature ticker row, see DESIGN.md section 4. Every price shown
+     anywhere in the app is built from this pattern: symbol, mono price,
+     colored delta, node count, timestamp. Never render a price without
+     the last three. */
+  .ticker-row {
+    @apply flex items-center justify-between gap-4 border border-border bg-card px-4 py-3 transition-colors hover:border-accent;
+  }
+
+  .card {
+    @apply border border-border bg-card transition-colors hover:border-accent;
+  }
+
+  .skeleton {
+    @apply animate-pulse bg-border/60;
+  }
+
+  .price-flash {
+    animation: price-flash 900ms ease-out;
+  }
+}
+
+@keyframes price-flash {
+  0% {
+    background-color: rgba(224, 167, 43, 0.18);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
