@@ -83,7 +83,7 @@ GET ${indexerUrl}/nodes`}</CodeBlock>
         <p>
           Every commodity entry carries <strong>nodesReporting</strong>,{" "}
           <strong>nodesTotal</strong>, and <strong>priceTimestamp</strong> alongside the price.
-          If <strong>sourceAvailable</strong> is false, price is null, treat that as "no data,"
+          If <strong>sourceAvailable</strong> is false, price is null, treat that as &ldquo;no data,&rdquo;
           never substitute zero or the previous value.
         </p>
       </DocsSection>
