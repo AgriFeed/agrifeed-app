@@ -1,9 +1,55 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
-import { parseAmountToRaw, pricefloor } from "@agrifeed/sdk";
+import { useEffect, useState, type FormEvent } from "react";
+import { oracle, parseAmountToRaw, pricefloor } from "@agrifeed/sdk";
 import { freighterSignAndSend } from "@agrifeed/sdk/wallet";
 import { networkPassphrase, pricefloorContractId, rpcUrl, oracleContractId } from "@/lib/stellar";
+
+/**
+ * Loads the oracle's live tracked-commodity list via `assets()`, rather than
+ * a hardcoded set, so a new commodity added on-chain (`add_commodity`) shows
+ * up here with no frontend change. Only `Other`-tagged assets are shown:
+ * per the contract's own convention, agricultural commodities are always
+ * `Asset::Other(Symbol)`, `Stellar`-tagged assets are not commodities.
+ */
+function useCommodities() {
+  const [commodities, setCommodities] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const contractId = oracleContractId();
+    if (!contractId) {
+      setLoading(false);
+      setError("NEXT_PUBLIC_ORACLE_CONTRACT_ID is not set");
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    oracle
+      .assets({ contractId, rpcUrl: rpcUrl(), networkPassphrase: networkPassphrase() })
+      .then((assets) => {
+        if (cancelled) return;
+        setCommodities(assets.filter((a) => a.tag === "Other").map((a) => a.values[0]));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "failed to load commodities from the oracle");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return { commodities, loading, error };
+}
 
 type Step = "initialize" | "fund" | "settle" | "cancel";
 
@@ -111,6 +157,7 @@ interface StepProps {
 
 function InitializeForm({ publicKey, config, signAndSend }: StepProps) {
   const { pending, result, error, run } = useAction();
+  const { commodities, loading: commoditiesLoading, error: commoditiesError } = useCommodities();
 
   function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -143,13 +190,27 @@ function InitializeForm({ publicKey, config, signAndSend }: StepProps) {
       {field("Buyer address", <input name="buyer" defaultValue={publicKey} required className={inputClass} />)}
       {field(
         "Commodity",
-        <select name="commodity" className={inputClass}>
-          {["COCOA", "COFFEE", "WHEAT", "MAIZE", "RICE", "SOYBEAN", "SUGAR", "COTTON"].map((c) => (
+        <select
+          name="commodity"
+          className={inputClass}
+          required
+          disabled={commoditiesLoading || commodities.length === 0}
+        >
+          {commoditiesLoading && <option value="">Loading from oracle…</option>}
+          {!commoditiesLoading && commodities.length === 0 && (
+            <option value="">No commodities tracked by the oracle yet</option>
+          )}
+          {commodities.map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
           ))}
         </select>,
+      )}
+      {commoditiesError && (
+        <p className="text-sm text-price-down sm:col-span-2">
+          Could not load commodities from the oracle: {commoditiesError}
+        </p>
       )}
       {field("Oracle decimals", <input name="decimals" type="number" defaultValue={2} className={inputClass} />)}
       {field("Floor price", <input name="floorPrice" placeholder="6188.00" required className={inputClass} />)}
