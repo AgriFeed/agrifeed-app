@@ -234,19 +234,16 @@ async function handleEvent(
       return;
     }
 
-    // NOTE: unlike the node_added/price_submitted/price_finalized cases
-    // above, the event names below have NOT been verified against a real
-    // AgriPriceFloor deployment in this pass, they are still the function
-    // names, not confirmed snake_case event names, since fixing them was
-    // out of scope for the oracle ticker this pass covers. Given the
-    // pattern just found and fixed above (event name = snake_case(struct
-    // name), e.g. Initialized -> "initialized", Funded -> "funded"), these
-    // are likely wrong in the same way and should be checked against a
-    // live pricefloor deal's real events before relying on this table.
-    case "initialize":
-    case "fund":
-    case "settle":
-    case "cancel": {
+    // Same bug as node_added/price_submitted/price_finalized above: these
+    // cases matched the contract's function names instead of the real
+    // snake_case event names #[contractevent] emits. Confirmed against
+    // agripricefloor's actual event structs (agrifeed-contract@b11df10,
+    // contracts/agripricefloor/src/lib.rs): Initialized -> "initialized",
+    // Funded -> "funded", Settled -> "settled", Cancelled -> "cancelled".
+    case "initialized":
+    case "funded":
+    case "settled":
+    case "cancelled": {
       if (!event.contractId) return;
       await pool.query(
         `INSERT INTO pricefloor_events (contract_id, event_type, ledger, tx_hash, data)
