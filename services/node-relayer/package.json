@@ -1,0 +1,22 @@
+{
+  "name": "@agrifeed/node-relayer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Independent oracle node operator process: fetches real commodity prices from FAO, IMF, and AMIS, normalizes them, and submits them to AgriFeedOracle on a schedule.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@agrifeed/sdk": "workspace:*",
+    "@stellar/stellar-sdk": "17.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.9.0"
+  }
+}

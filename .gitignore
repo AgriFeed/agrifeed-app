@@ -1,0 +1,21 @@
+node_modules/
+.pnpm-store/
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+.env
+.env.local
+.DS_Store
+npm-debug.log*
+pnpm-debug.log*
+
+# research (Python)
+research/.venv/
+research/__pycache__/
+research/.ipynb_checkpoints/
+research/*.pyc
+
+# postgres local volume
+.pgdata/

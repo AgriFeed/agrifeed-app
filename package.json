@@ -1,0 +1,22 @@
+{
+  "name": "agrifeed-app",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Public-facing platform for the AgriFeed Stellar oracle: frontend, SDK, indexer, and node relayer.",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@11.18.0",
+  "scripts": {
+    "build": "pnpm -r --if-present run build",
+    "dev:web": "pnpm --filter @agrifeed/web dev",
+    "dev:indexer": "pnpm --filter @agrifeed/indexer dev",
+    "dev:node-relayer": "pnpm --filter @agrifeed/node-relayer dev",
+    "lint": "pnpm -r --if-present run lint",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "test": "pnpm -r --if-present run test"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

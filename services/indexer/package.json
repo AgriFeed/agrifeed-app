@@ -1,0 +1,27 @@
+{
+  "name": "@agrifeed/indexer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Polls the AgriFeedOracle and AgriPriceFloor contracts over Soroban RPC, writes events to Postgres, and serves a read-only REST API for apps/web.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "migrate": "tsx src/db/migrate.ts"
+  },
+  "dependencies": {
+    "@agrifeed/sdk": "workspace:*",
+    "@stellar/stellar-sdk": "17.0.1",
+    "pg": "^8.13.1",
+    "express": "^4.21.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "tsx": "^4.19.2",
+    "@types/express": "^4.17.21",
+    "@types/pg": "^8.11.10",
+    "@types/node": "^22.9.0"
+  }
+}
