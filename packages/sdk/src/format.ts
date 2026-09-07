@@ -23,6 +23,27 @@ export function formatPrice(raw: string | bigint, decimals: number): FormattedPr
   };
 }
 
+/**
+ * The inverse of formatPrice(): parses a human-entered decimal string
+ * (e.g. "6188.00" or "-12.5") into a raw i128 string scaled by
+ * `10^decimals`, using string/BigInt arithmetic only. Throws on anything
+ * that isn't a plain decimal number, rather than silently coercing.
+ */
+export function parseAmountToRaw(input: string, decimals: number): string {
+  const trimmed = input.trim();
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(trimmed);
+  if (!match) {
+    throw new Error(`"${input}" is not a valid decimal amount`);
+  }
+  const [, sign, whole, fraction = ""] = match;
+  if (fraction.length > decimals) {
+    throw new Error(`"${input}" has more than ${decimals} decimal places`);
+  }
+  const paddedFraction = fraction.padEnd(decimals, "0");
+  const digits = `${whole}${paddedFraction}`.replace(/^0+(?=\d)/, "");
+  return `${sign}${digits}`;
+}
+
 /** Renders an Asset as its display symbol, e.g. `Other("COCOA")` -> `COCOA`. */
 export function assetSymbol(asset: Asset): string {
   return asset.values[0];
