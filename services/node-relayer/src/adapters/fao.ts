@@ -25,7 +25,7 @@ import type { SourcePrice } from "./types.js";
  *    Prices_E_Elements.csv in the same archive).
  *
  * FAOSTAT does NOT publish a world-aggregate producer price in USD (only
- * per-country farm-gate prices exist for that element) — confirmed by
+ * per-country farm-gate prices exist for that element), confirmed by
  * querying area code 5000 ("World") + element 5532 against the live file
  * and getting zero rows. So each commodity below uses a specific
  * reference producer country instead of a "world price": the world's

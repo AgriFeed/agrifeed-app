@@ -82,7 +82,7 @@ export default async function CommodityPage({ params }: { params: { symbol: stri
                       {formatPriceWithUnit(f.price, data.decimals, data.symbol)}
                     </td>
                     <td className="py-2 pr-4 text-ink-muted">
-                      {f.contributingNodes.map((n) => truncateAddress(n)).join(", ") || "—"}
+                      {f.contributingNodes.map((n) => truncateAddress(n)).join(", ") || "none recorded"}
                     </td>
                     <td className="py-2 pr-4 text-ink-muted">{truncateAddress(f.txHash)}</td>
                   </tr>

@@ -6,8 +6,8 @@ import type { SourcePrice } from "./types.js";
  * AMIS (Agricultural Market Information System, amis-outlook.org).
  *
  * Verified live 2026-09-07: AMIS has no API or dataset of its own that
- * publishes commodity PRICES. Its Market Database — served through
- * https://api.data.apps.fao.org/api/v2/bigquery — covers only supply,
+ * publishes commodity PRICES. Its Market Database, served through
+ * https://api.data.apps.fao.org/api/v2/bigquery, covers only supply,
  * demand, and stocks (production, imports, domestic utilization,
  * exports, closing stocks, in million tonnes) for four commodities
  * (wheat, maize, rice, soybean). A real query against it returned rows

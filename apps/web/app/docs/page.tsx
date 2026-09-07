@@ -18,7 +18,7 @@ export default function DocsPage() {
           AgriFeedOracle implements the SEP-40 price feed interface plus AgriFeed&apos;s own
           admin and ingestion functions. Current testnet address:
         </p>
-        <CodeBlock>{oracleId ?? "not deployed yet — check the repo README for the current address"}</CodeBlock>
+        <CodeBlock>{oracleId ?? "not deployed yet, check the repo README for the current address"}</CodeBlock>
         <p>RPC endpoint used by this deployment:</p>
         <CodeBlock>{rpc}</CodeBlock>
       </DocsSection>
