@@ -71,11 +71,13 @@ CREATE TABLE IF NOT EXISTS price_finalizations (
 
 -- AgriPriceFloor has no on-chain getter for its own state (see
 -- packages/sdk/src/pricefloor.ts getState), so the indexer is the only
--- place that reconstructs it, from initialize/fund/settle/cancel events.
+-- place that reconstructs it, from initialized/funded/settled/cancelled
+-- events (the real event names #[contractevent] emits, not the contract's
+-- function names).
 CREATE TABLE IF NOT EXISTS pricefloor_events (
   id BIGSERIAL PRIMARY KEY,
   contract_id TEXT NOT NULL,
-  event_type TEXT NOT NULL CHECK (event_type IN ('initialize', 'fund', 'settle', 'cancel')),
+  event_type TEXT NOT NULL CHECK (event_type IN ('initialized', 'funded', 'settled', 'cancelled')),
   ledger BIGINT NOT NULL,
   tx_hash TEXT NOT NULL,
   data JSONB NOT NULL,
