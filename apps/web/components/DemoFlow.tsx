@@ -5,6 +5,38 @@ import { oracle, parseAmountToRaw, pricefloor } from "@agrifeed/sdk";
 import { freighterSignAndSend } from "@agrifeed/sdk/wallet";
 import { networkPassphrase, pricefloorContractId, rpcUrl, oracleContractId } from "@/lib/stellar";
 
+// floor_price/notional must be encoded in the oracle's own decimals, not a guessed default.
+function useOracleDecimals() {
+  const [decimals, setDecimals] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const contractId = oracleContractId();
+    if (!contractId) {
+      setError("NEXT_PUBLIC_ORACLE_CONTRACT_ID is not set");
+      return;
+    }
+
+    let cancelled = false;
+    oracle
+      .decimals({ contractId, rpcUrl: rpcUrl(), networkPassphrase: networkPassphrase() })
+      .then((d) => {
+        if (!cancelled) setDecimals(d);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "failed to load the oracle's decimals");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return { decimals, error };
+}
+
 /**
  * Loads the oracle's live tracked-commodity list via `assets()`, rather than
  * a hardcoded set, so a new commodity added on-chain (`add_commodity`) shows
@@ -158,12 +190,13 @@ interface StepProps {
 function InitializeForm({ publicKey, config, signAndSend }: StepProps) {
   const { pending, result, error, run } = useAction();
   const { commodities, loading: commoditiesLoading, error: commoditiesError } = useCommodities();
+  const { decimals: oracleDecimals, error: decimalsError } = useOracleDecimals();
 
   function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
     const commodity = String(data.get("commodity") ?? "COCOA");
-    const decimals = Number(data.get("decimals") ?? 2);
+    const decimals = Number(data.get("decimals") ?? oracleDecimals ?? 7);
 
     void run(() =>
       pricefloor.initialize(
@@ -212,7 +245,21 @@ function InitializeForm({ publicKey, config, signAndSend }: StepProps) {
           Could not load commodities from the oracle: {commoditiesError}
         </p>
       )}
-      {field("Oracle decimals", <input name="decimals" type="number" defaultValue={2} className={inputClass} />)}
+      {field(
+        "Oracle decimals",
+        <input
+          key={oracleDecimals ?? "loading"}
+          name="decimals"
+          type="number"
+          defaultValue={oracleDecimals ?? 7}
+          className={inputClass}
+        />,
+      )}
+      {decimalsError && (
+        <p className="text-sm text-price-down sm:col-span-2">
+          Could not load decimals from the oracle, defaulting to 7: {decimalsError}
+        </p>
+      )}
       {field("Floor price", <input name="floorPrice" placeholder="6188.00" required className={inputClass} />)}
       {field("Notional", <input name="notional" placeholder="1000.00" required className={inputClass} />)}
       {field(
@@ -244,7 +291,7 @@ function FundForm({ publicKey, config, signAndSend }: StepProps) {
   function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
-    const decimals = Number(data.get("decimals") ?? 2);
+    const decimals = Number(data.get("decimals") ?? 7);
     void run(() =>
       pricefloor.fund(config, publicKey, BigInt(parseAmountToRaw(String(data.get("amount")), decimals)), signAndSend),
     );
@@ -254,7 +301,11 @@ function FundForm({ publicKey, config, signAndSend }: StepProps) {
     <form onSubmit={onSubmit} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       {field("Buyer (connected wallet)", <input value={publicKey} disabled className={inputClass} />)}
       {field("Amount", <input name="amount" placeholder="1000.00" required className={inputClass} />)}
-      {field("Settlement token decimals", <input name="decimals" type="number" defaultValue={2} className={inputClass} />)}
+      {field(
+        "Settlement token decimals",
+        <input name="decimals" type="number" defaultValue={7} className={inputClass} />,
+      )}
+      <p className="text-sm text-ink-muted sm:col-span-2">Native XLM (this demo&apos;s settlement token) uses 7 decimals.</p>
       <div className="sm:col-span-2">
         <button
           type="submit"
