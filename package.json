@@ -6,7 +6,7 @@
   "engines": {
     "node": ">=20"
   },
-  "packageManager": "pnpm@11.18.0",
+  "packageManager": "pnpm@9.15.0",
   "scripts": {
     "build": "pnpm -r --if-present run build",
     "dev:web": "pnpm --filter @agrifeed/web dev",
