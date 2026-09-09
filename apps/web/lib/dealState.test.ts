@@ -32,6 +32,7 @@ function prepared(pendingAddresses: string[]): PreparedMultiPartyInvocation {
   return {
     transactionXdr: "AAAA",
     pendingAuthEntries: pendingAddresses.map((address) => ({ address, entryXdr: `entry-for-${address}` })),
+    sourceAccountAuthEntryXdrs: [],
   };
 }
 

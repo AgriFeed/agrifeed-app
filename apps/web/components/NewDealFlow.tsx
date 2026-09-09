@@ -503,6 +503,7 @@ function SubmitStep({ state, dispatch }: { state: DealState; dispatch: React.Dis
         { contractId: state.contractId, rpcUrl: rpcUrl(), networkPassphrase: networkPassphrase() },
         state.prepared.transactionXdr,
         signedEntryXdrs,
+        state.prepared.sourceAccountAuthEntryXdrs,
         freighterSignAndSend(networkPassphrase()),
       );
       dispatch({ type: "SUBMIT_SUCCESS" });

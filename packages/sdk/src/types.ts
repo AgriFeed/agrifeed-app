@@ -106,6 +106,20 @@ export interface PendingAuthEntry {
 export interface PreparedMultiPartyInvocation {
   transactionXdr: string;
   pendingAuthEntries: PendingAuthEntry[];
+  /**
+   * Base64 XDR of every SourceAccount-credentialed entry this same
+   * simulation found (one per required address that is also the
+   * transaction's own source account, e.g. the party who also initiates the
+   * deal). These carry no nonce, so unlike `pendingAuthEntries` they never go
+   * stale and can be resubmitted unchanged at any later time; they must
+   * still be preserved and resubmitted exactly as found here, since
+   * `submitMultiPartyInvocation` primes its resource-fee re-simulation with
+   * these plus the now-signed `pendingAuthEntries`, rather than letting that
+   * re-simulation invent its own (see `submitMultiPartyInvocation`'s doc
+   * comment for why re-deriving them there instead would break the already
+   * collected signatures' nonces).
+   */
+  sourceAccountAuthEntryXdrs: string[];
 }
 
 export type AgriPriceFloorState = {
