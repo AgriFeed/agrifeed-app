@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Keypair, scValToNative } from "@stellar/stellar-sdk";
-import { cancelArgs, fundArgs } from "./pricefloor.js";
+import { cancelArgs, fundArgs, initializeArgs } from "./pricefloor.js";
+import type { InitializePriceFloorParams } from "./pricefloor.js";
 
 describe("cancelArgs", () => {
   it("encodes exactly one address argument, matching the contract's cancel(caller: Address)", () => {
@@ -55,5 +56,47 @@ describe("fundArgs", () => {
     const args = fundArgs(buyer, large);
 
     expect(scValToNative(args[1]!)).toBe(large);
+  });
+});
+
+// This is what multiparty.ts's prepareMultiPartyInvocation("initialize", ...)
+// actually calls to build the two-party init transaction, so it must
+// produce exactly the 8 arguments the contract's real initialize()
+// signature requires, in order, not a stand-in the UI reimplements.
+describe("initializeArgs", () => {
+  function params(overrides: Partial<InitializePriceFloorParams> = {}): InitializePriceFloorParams {
+    return {
+      farmer: Keypair.random().publicKey(),
+      buyer: Keypair.random().publicKey(),
+      commodity: { tag: "Other", values: ["COCOA"] },
+      floorPrice: 618800n,
+      notional: 100000n,
+      settlementToken: Keypair.random().publicKey(),
+      maturityTs: 2_000_000_000n,
+      oracle: Keypair.random().publicKey(),
+      ...overrides,
+    };
+  }
+
+  it("encodes exactly 8 arguments, matching the contract's real initialize signature", () => {
+    expect(initializeArgs(params())).toHaveLength(8);
+  });
+
+  it("encodes farmer and buyer as distinct addresses in the right positions", () => {
+    const p = params();
+    const args = initializeArgs(p);
+
+    expect(scValToNative(args[0]!)).toBe(p.farmer);
+    expect(scValToNative(args[1]!)).toBe(p.buyer);
+    expect(scValToNative(args[0]!)).not.toBe(scValToNative(args[1]!));
+  });
+
+  it("preserves i128 floor_price and notional exactly, and u64 maturity_ts", () => {
+    const p = params({ floorPrice: 123_456_789_012_345_678_901n, notional: 42n, maturityTs: 1_999_999_999n });
+    const args = initializeArgs(p);
+
+    expect(scValToNative(args[3]!)).toBe(123_456_789_012_345_678_901n);
+    expect(scValToNative(args[4]!)).toBe(42n);
+    expect(scValToNative(args[6]!)).toBe(1_999_999_999n);
   });
 });

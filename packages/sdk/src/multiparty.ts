@@ -54,6 +54,28 @@ import { submitAndConfirm } from "./soroban-tx.js";
  * signature, which the source account provides when it calls `signAndSend`
  * in `submitMultiPartyInvocation`.
  */
+/**
+ * Throws unless `connectedAddress` is exactly `expectedAddress`. This is the
+ * "verify identity before signing" guard: it is deliberately pure (no
+ * Freighter call inside it) so the check itself is unit-testable without
+ * mocking a wallet, and deliberately synchronous/throwing so a caller
+ * cannot accidentally proceed to request a signature on a mismatch. `role`
+ * (e.g. "farmer", "buyer") is only used to make the error readable.
+ */
+export function assertExpectedSigner(
+  connectedAddress: string | null,
+  expectedAddress: string,
+  role: string,
+): void {
+  if (connectedAddress !== expectedAddress) {
+    throw new OracleError(
+      `Wrong wallet connected for ${role}: expected ${expectedAddress}, but ` +
+        `${connectedAddress ?? "no wallet"} is connected. Switch Freighter to the ${role}'s ` +
+        `account and try again.`,
+    );
+  }
+}
+
 export function toPendingAuthEntries(entries: xdr.SorobanAuthorizationEntry[]): PendingAuthEntry[] {
   const pending: PendingAuthEntry[] = [];
   for (const entry of entries) {

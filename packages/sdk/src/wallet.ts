@@ -7,6 +7,7 @@ import {
 } from "@stellar/freighter-api";
 import { OracleError } from "./types.js";
 import type { PendingAuthEntry } from "./types.js";
+import { assertExpectedSigner } from "./multiparty.js";
 
 /** Signs a base64 transaction XDR and returns the signed base64 XDR. */
 export type SignAndSend = (unsignedXdr: string) => Promise<string>;
@@ -86,4 +87,25 @@ export async function signAuthEntryWithFreighter(
     throw new OracleError(`Freighter auth entry signing failed for ${pending.address}: ${result.error}`);
   }
   return { address: pending.address, entryXdr: result.signedAuthEntry };
+}
+
+/**
+ * Like `signAuthEntryWithFreighter`, but verifies the currently connected
+ * Freighter account is actually the party this entry is for *before*
+ * requesting a signature, rather than relying on the user's say-so or on
+ * Freighter's own (extension-side) refusal. `role` is a readable label
+ * ("farmer", "buyer") used only in the rejection message.
+ *
+ * This is the function every multi-party signing step in the UI should
+ * call, never `signAuthEntryWithFreighter` directly, so a wrong-wallet
+ * mismatch is always caught before a signature is ever requested.
+ */
+export async function signAuthEntryAsExpectedParty(
+  pending: PendingAuthEntry,
+  role: string,
+  networkPassphrase: string,
+): Promise<PendingAuthEntry> {
+  const connected = await getConnectedAddress();
+  assertExpectedSigner(connected, pending.address, role);
+  return signAuthEntryWithFreighter(pending, networkPassphrase);
 }

@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@agrifeed/sdk": "workspace:*",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "typescript": "^5.6.3",
+    "vitest": "5.0.0",
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

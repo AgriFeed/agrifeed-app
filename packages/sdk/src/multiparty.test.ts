@@ -11,7 +11,7 @@ import {
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
-import { toPendingAuthEntries, withAuthEntries } from "./multiparty.js";
+import { assertExpectedSigner, toPendingAuthEntries, withAuthEntries } from "./multiparty.js";
 
 // A real, valid-checksum contract strkey (this project's own deployed
 // oracle address, already public). Only its validity as a strkey matters
@@ -140,5 +140,39 @@ describe("withAuthEntries", () => {
     const builder = new TransactionBuilder(source, { fee: "100", networkPassphrase: Networks.TESTNET });
 
     expect(() => withAuthEntries(builder, nonSorobanTx, [])).toThrow();
+  });
+});
+
+describe("assertExpectedSigner", () => {
+  it("allows a connected address that matches the expected one", () => {
+    const address = Keypair.random().publicKey();
+    expect(() => assertExpectedSigner(address, address, "farmer")).not.toThrow();
+  });
+
+  it("rejects a connected wallet that is a different address than expected", () => {
+    const expected = Keypair.random().publicKey();
+    const wrongWallet = Keypair.random().publicKey();
+
+    expect(() => assertExpectedSigner(wrongWallet, expected, "farmer")).toThrow(/farmer/);
+  });
+
+  it("rejects when no wallet is connected at all", () => {
+    const expected = Keypair.random().publicKey();
+
+    expect(() => assertExpectedSigner(null, expected, "buyer")).toThrow(/no wallet/);
+  });
+
+  it("names the expected and actual address in the error, for debuggability", () => {
+    const expected = Keypair.random().publicKey();
+    const wrongWallet = Keypair.random().publicKey();
+
+    try {
+      assertExpectedSigner(wrongWallet, expected, "buyer");
+      throw new Error("expected assertExpectedSigner to throw");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      expect(message).toContain(expected);
+      expect(message).toContain(wrongWallet);
+    }
   });
 });

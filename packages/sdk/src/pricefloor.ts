@@ -103,28 +103,35 @@ export interface InitializePriceFloorParams {
  * `multiparty.ts` instead, which collects an independent signature from
  * each party before submitting.
  */
+/**
+ * Builds the argument list for `initialize(farmer, buyer, commodity,
+ * floor_price, notional, settlement_token, maturity_ts, oracle)`. Exported
+ * separately, mirroring `cancelArgs`/`fundArgs`, so the real two-party flow
+ * in `multiparty.ts` (`prepareMultiPartyInvocation(config, "initialize",
+ * initializeArgs(params), sourcePublicKey)`) builds its call the exact same
+ * way this single-signer path does, instead of duplicating the encoding in
+ * application code.
+ */
+export function initializeArgs(params: InitializePriceFloorParams): xdr.ScVal[] {
+  return [
+    nativeToScVal(params.farmer, { type: "address" }),
+    nativeToScVal(params.buyer, { type: "address" }),
+    assetToScVal(params.commodity),
+    nativeToScVal(params.floorPrice, { type: "i128" }),
+    nativeToScVal(params.notional, { type: "i128" }),
+    nativeToScVal(params.settlementToken, { type: "address" }),
+    nativeToScVal(params.maturityTs, { type: "u64" }),
+    nativeToScVal(params.oracle, { type: "address" }),
+  ];
+}
+
 export async function initialize(
   config: AgriPriceFloorConfig,
   params: InitializePriceFloorParams,
   callerPublicKey: string,
   signAndSend: SignAndSend,
 ): Promise<void> {
-  await invokeAndConfirm(
-    config,
-    "initialize",
-    [
-      nativeToScVal(params.farmer, { type: "address" }),
-      nativeToScVal(params.buyer, { type: "address" }),
-      assetToScVal(params.commodity),
-      nativeToScVal(params.floorPrice, { type: "i128" }),
-      nativeToScVal(params.notional, { type: "i128" }),
-      nativeToScVal(params.settlementToken, { type: "address" }),
-      nativeToScVal(params.maturityTs, { type: "u64" }),
-      nativeToScVal(params.oracle, { type: "address" }),
-    ],
-    callerPublicKey,
-    signAndSend,
-  );
+  await invokeAndConfirm(config, "initialize", initializeArgs(params), callerPublicKey, signAndSend);
 }
 
 /**

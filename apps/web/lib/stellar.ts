@@ -21,6 +21,28 @@ export function oracleContractId(): string | undefined {
   return process.env.NEXT_PUBLIC_ORACLE_CONTRACT_ID || undefined;
 }
 
+/**
+ * A single, already-deployed, already-initialized AgriPriceFloor instance.
+ * AgriPriceFloor is one-instance-per-deal (see agrifeed-contract's
+ * docs/testnet-deployment.md), so this is deliberately NOT "the" PriceFloor
+ * contract: it's a legacy/demo fallback for continuing to fund/settle/cancel
+ * one already-existing deal, kept because services/indexer's own
+ * PRICEFLOOR_CONTRACT_ID still needs exactly one instance to watch, and
+ * because it lets the demo's fund/settle/cancel steps work without first
+ * running through the full deploy+initialize flow every time. It is never
+ * used by that flow: a new deal deploys its own fresh instance via
+ * `pricefloorWasmHash()` instead.
+ */
 export function pricefloorContractId(): string | undefined {
   return process.env.NEXT_PUBLIC_PRICEFLOOR_CONTRACT_ID || undefined;
+}
+
+/**
+ * The uploaded AgriPriceFloor WASM's hash, from which a new instance is
+ * deployed per deal (`stellar contract deploy --wasm-hash`, see
+ * agrifeed-contract's docs/testnet-deployment.md step 8). This is what the
+ * deploy-a-new-deal flow actually uses, not `pricefloorContractId()`.
+ */
+export function pricefloorWasmHash(): string | undefined {
+  return process.env.NEXT_PUBLIC_PRICEFLOOR_WASM_HASH || undefined;
 }
