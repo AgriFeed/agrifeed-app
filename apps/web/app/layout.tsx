@@ -22,7 +22,7 @@ const mono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "AgriFeed",
-  description: "A decentralized commodity price oracle for Stellar.",
+  description: "An agricultural commodity price oracle and price-protection contract on Stellar Testnet.",
 };
 
 export default function RootLayout({

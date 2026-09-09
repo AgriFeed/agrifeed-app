@@ -10,6 +10,18 @@
   ::selection {
     @apply bg-accent/30 text-ink-primary;
   }
+
+  /* Accessibility foundation: every focusable element gets a visible,
+     high-contrast ring. Never rely on a browser default that a reset
+     might have stripped, and never remove focus outlines without
+     replacing them. */
+  :focus-visible {
+    @apply outline outline-2 outline-offset-2 outline-accent;
+  }
+
+  table {
+    @apply w-full border-collapse;
+  }
 }
 
 @layer components {
@@ -22,23 +34,44 @@
   }
 
   .card {
-    @apply border border-border bg-card transition-colors hover:border-accent;
+    @apply border border-border bg-card transition-colors;
   }
 
   .skeleton {
-    @apply animate-pulse bg-border/60;
+    @apply animate-pulse bg-border/40;
   }
 
   .price-flash {
     animation: price-flash 900ms ease-out;
   }
+
+  /* Semantic status badge: pairs a small glyph with a text label so
+     meaning never depends on color alone (Phase 3 Step 5/13). Six
+     variants match the tailwind.config.ts status.* tokens plus the
+     dedicated testnet hue. Use the `data-tone` attribute rather than a
+     class per tone, so callers pass one prop and get consistent
+     glyph+color+label pairing from one place. */
+  .status-badge {
+    @apply inline-flex items-center gap-1.5 border px-2 py-0.5 font-mono text-xs;
+  }
+
+  .table-scroll {
+    @apply w-full overflow-x-auto;
+  }
 }
 
 @keyframes price-flash {
   0% {
-    background-color: rgba(224, 167, 43, 0.18);
+    background-color: rgba(154, 90, 26, 0.14);
   }
   100% {
     background-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .price-flash,
+  .skeleton {
+    animation: none;
   }
 }

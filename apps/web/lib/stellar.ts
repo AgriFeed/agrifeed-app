@@ -1,5 +1,27 @@
 import { Networks } from "@stellar/stellar-sdk";
 
+/** Raw NEXT_PUBLIC_STELLAR_NETWORK value, defaulted the same way
+ * networkPassphrase() is, so callers never derive a different default. */
+export function stellarNetwork(): "mainnet" | "futurenet" | "testnet" {
+  const network = process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "testnet";
+  return network === "mainnet" || network === "futurenet" ? network : "testnet";
+}
+
+/** Human-readable network name for the global network indicator (Phase 3
+ * Step 4). Never abbreviate this to a color-only dot: the whole point is
+ * that a user can't miss which network they're looking at. */
+export function networkLabel(): string {
+  switch (stellarNetwork()) {
+    case "mainnet":
+      return "Stellar Public Network";
+    case "futurenet":
+      return "Stellar Futurenet";
+    case "testnet":
+    default:
+      return "Stellar Testnet";
+  }
+}
+
 export function networkPassphrase(): string {
   const network = process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "testnet";
   switch (network) {

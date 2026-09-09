@@ -2,7 +2,10 @@ export function SiteFooter() {
   return (
     <footer className="border-t border-border">
       <div className="mx-auto flex max-w-6xl flex-col gap-2 px-6 py-8 text-sm text-ink-muted sm:flex-row sm:items-center sm:justify-between">
-        <span>AgriFeed is an open-source oracle. Every price shown here is read live from Soroban.</span>
+        <span>
+          AgriFeed is an open-source commodity price oracle on Stellar Testnet. Prices are indexed
+          from the AgriFeedOracle contract, not read live per request.
+        </span>
         <a
           href="https://github.com/AgriFeed/agrifeed-app"
           className="font-mono transition-colors hover:text-ink-primary"
