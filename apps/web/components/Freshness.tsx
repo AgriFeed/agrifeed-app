@@ -15,12 +15,19 @@ import { formatTimestamp, relativeAge } from "@/lib/time";
  *
  * The absolute timestamp is revealed via a native <details> disclosure
  * (not a hover-only tooltip), so it's reachable by keyboard and on touch
- * devices without any extra JS state.
+ * devices without any extra JS state — except when `interactive` is false,
+ * for use inside an already-interactive ancestor (e.g. a row that is
+ * itself a link): nesting a <details>/<summary> inside an <a> makes a
+ * click ambiguous between "toggle" and "navigate" and is invalid HTML.
+ * In that mode the absolute timestamp is still available, via the native
+ * `title` tooltip on the <time> element, which adds no interactive
+ * element of its own.
  */
 export function Freshness({
   timestamp,
   staleAfterSeconds,
   refreshing = false,
+  interactive = true,
 }: {
   /** ISO timestamp string. */
   timestamp: string;
@@ -29,9 +36,21 @@ export function Freshness({
    * isn't loaded yet) rather than guessing a threshold. */
   staleAfterSeconds?: number;
   refreshing?: boolean;
+  /** Set to false when rendering inside another interactive element (e.g.
+   * a link wrapping the whole row) so this never nests a second
+   * interactive control inside it. */
+  interactive?: boolean;
 }) {
   const ageSeconds = Math.max(0, Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000));
   const isStale = staleAfterSeconds !== undefined && ageSeconds > staleAfterSeconds;
+  const staleClass = isStale ? "text-status-warning" : "text-ink-muted";
+
+  const label = (
+    <>
+      {isStale ? "stale · " : ""}
+      <time dateTime={timestamp}>{relativeAge(timestamp)}</time>
+    </>
+  );
 
   return (
     <span className="inline-flex items-center gap-2 font-mono text-xs">
@@ -40,13 +59,16 @@ export function Freshness({
           refreshing…
         </span>
       )}
-      <details className="inline">
-        <summary className={`inline cursor-pointer list-none ${isStale ? "text-status-warning" : "text-ink-muted"}`}>
-          {isStale ? "stale · " : ""}
-          <time dateTime={timestamp}>{relativeAge(timestamp)}</time>
-        </summary>
-        <span className="ml-1 text-ink-muted">{formatTimestamp(timestamp)}</span>
-      </details>
+      {interactive ? (
+        <details className="inline">
+          <summary className={`inline cursor-pointer list-none ${staleClass}`}>{label}</summary>
+          <span className="ml-1 text-ink-muted">{formatTimestamp(timestamp)}</span>
+        </details>
+      ) : (
+        <span className={staleClass} title={formatTimestamp(timestamp)}>
+          {label}
+        </span>
+      )}
     </span>
   );
 }

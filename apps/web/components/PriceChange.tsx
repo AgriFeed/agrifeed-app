@@ -1,7 +1,6 @@
 type Direction = "up" | "down" | "flat";
 
-function direction(price: string, previous: string | null): Direction {
-  if (!previous) return "flat";
+function direction(price: string, previous: string): Direction {
   const a = BigInt(price);
   const b = BigInt(previous);
   if (a > b) return "up";
@@ -24,8 +23,13 @@ const LABEL: Record<Direction, string> = { up: "up", down: "down", flat: "unchan
  * price strings directly (same i128-as-string contract as the rest of the
  * indexer API) rather than a pre-computed delta, so every caller derives
  * direction the same way.
+ *
+ * Renders nothing when there is no previous price to compare against —
+ * a single data point has no direction, and showing a flat dash for it
+ * would manufacture a "0% change" that was never actually observed.
  */
 export function PriceChange({ price, previousPrice }: { price: string; previousPrice: string | null }) {
+  if (previousPrice === null) return null;
   const d = direction(price, previousPrice);
   return (
     <span className={`font-mono text-sm ${COLOR[d]}`}>
