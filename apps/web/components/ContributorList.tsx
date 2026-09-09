@@ -10,7 +10,7 @@ import { IdentifierDisplay } from "@/components/IdentifierDisplay";
  */
 export function ContributorList({ addresses }: { addresses: string[] }) {
   if (addresses.length === 0) {
-    return <span className="text-xs text-ink-muted">no contributors recorded</span>;
+    return <span className="text-xs text-ink-muted">No contributor records available</span>;
   }
   return (
     <ul className="flex flex-wrap gap-x-3 gap-y-1">
