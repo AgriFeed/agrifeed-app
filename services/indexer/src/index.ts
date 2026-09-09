@@ -2,7 +2,7 @@ import { loadEnv } from "./env.js";
 import { logger } from "./logger.js";
 import { getPool } from "./db/client.js";
 import { migrate } from "./db/migrate.js";
-import { pollEvents, pollOracleState } from "./poll.js";
+import { backfillContributingNodes, pollEvents, pollOracleState } from "./poll.js";
 import { createApp } from "./api/server.js";
 
 const POLL_INTERVAL_MS = 60_000;
@@ -26,6 +26,8 @@ async function main(): Promise<void> {
 
   await migrate(env.databaseUrl);
   logger.info("database migrated");
+
+  await backfillContributingNodes(pool);
 
   const app = createApp(env, pool);
   app.listen(env.apiPort, () => {

@@ -56,7 +56,10 @@ CREATE INDEX IF NOT EXISTS node_submissions_symbol_idx
 
 -- One row per finalize_price call: which node submissions fed into a given
 -- finalized price, so /commodity/[symbol] can show exactly which nodes
--- contributed, never just a count.
+-- contributed, never just a count. contributing_nodes is populated by
+-- poll.ts at insert time, reconstructed from node_submissions (see
+-- computeContributingNodes in poll.ts), not from the PriceFinalized event
+-- itself: the contract emits no contributor list on that event.
 CREATE TABLE IF NOT EXISTS price_finalizations (
   id BIGSERIAL PRIMARY KEY,
   symbol TEXT NOT NULL,
@@ -74,10 +77,36 @@ CREATE TABLE IF NOT EXISTS price_finalizations (
 -- place that reconstructs it, from initialized/funded/settled/cancelled
 -- events (the real event names #[contractevent] emits, not the contract's
 -- function names).
+--
+-- Oracle's own Initialized event shares that same "initialized" name, but
+-- it is never written here: poll.ts disambiguates by matching
+-- event.contractId against the configured ORACLE_CONTRACT_ID /
+-- PRICEFLOOR_CONTRACT_ID before routing, so only a genuine PriceFloor
+-- Initialized event lands in this table (see oracle_events below for the
+-- oracle's own).
 CREATE TABLE IF NOT EXISTS pricefloor_events (
   id BIGSERIAL PRIMARY KEY,
   contract_id TEXT NOT NULL,
   event_type TEXT NOT NULL CHECK (event_type IN ('initialized', 'funded', 'settled', 'cancelled')),
+  ledger BIGINT NOT NULL,
+  tx_hash TEXT NOT NULL,
+  data JSONB NOT NULL,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (tx_hash, event_type)
+);
+
+-- Oracle admin/config-change events with no dedicated getter on the SEP-40
+-- read interface (base/decimals/resolution/assets/price/prices/lastprice
+-- expose none of threshold, retention, or *when* a commodity/admin was set,
+-- only add_commodity's cumulative effect via assets()). A separate table
+-- from pricefloor_events, not just a distinguishing column, so that an
+-- oracle-emitted "initialized" (Contract::initialize's own event) can never
+-- land among PriceFloor's initialized/funded/settled/cancelled rows purely
+-- because both contracts happen to name an event the same thing.
+CREATE TABLE IF NOT EXISTS oracle_events (
+  id BIGSERIAL PRIMARY KEY,
+  contract_id TEXT NOT NULL,
+  event_type TEXT NOT NULL CHECK (event_type IN ('initialized', 'threshold_updated', 'retention_updated', 'commodity_added')),
   ledger BIGINT NOT NULL,
   tx_hash TEXT NOT NULL,
   data JSONB NOT NULL,

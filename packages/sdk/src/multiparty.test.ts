@@ -11,7 +11,7 @@ import {
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
-import { assertExpectedSigner, toPendingAuthEntries, withAuthEntries } from "./multiparty.js";
+import { assertExpectedSigner, mergeSignedAuthEntries, toPendingAuthEntries, withAuthEntries } from "./multiparty.js";
 
 // A real, valid-checksum contract strkey (this project's own deployed
 // oracle address, already public). Only its validity as a strkey matters
@@ -36,7 +36,7 @@ function buildRealInvokeOp() {
 /** A syntactically real, unsigned SOROBAN_CREDENTIALS_ADDRESS entry for
  * `address`, wrapping a real invocation tree (via buildRealInvokeOp) so
  * every field inspectAuthEntry reads is a genuine XDR value, not a stub. */
-function addressCredentialedEntry(address: string): xdr.SorobanAuthorizationEntry {
+function addressCredentialedEntry(address: string, nonce = 1n): xdr.SorobanAuthorizationEntry {
   const { op } = buildRealInvokeOp();
   const func = op.func as { invokeContract: unknown };
   const invocation = new xdr.SorobanAuthorizedInvocation({
@@ -48,7 +48,7 @@ function addressCredentialedEntry(address: string): xdr.SorobanAuthorizationEntr
   const credentials = xdr.SorobanCredentials.sorobanCredentialsAddress(
     new xdr.SorobanAddressCredentials({
       address: new Address(address).toScAddress(),
-      nonce: 1n,
+      nonce,
       signatureExpirationLedger: 0,
       signature: xdr.ScVal.scvVoid(),
     }),
@@ -140,6 +140,56 @@ describe("withAuthEntries", () => {
     const builder = new TransactionBuilder(source, { fee: "100", networkPassphrase: Networks.TESTNET });
 
     expect(() => withAuthEntries(builder, nonSorobanTx, [])).toThrow();
+  });
+});
+
+describe("mergeSignedAuthEntries", () => {
+  it("keeps a fresh source-account-credentialed entry alongside the signed address entries", () => {
+    // Regression test for a real defect found during audit: when one party
+    // (e.g. the farmer) is also the transaction's source account, their
+    // requirement comes back from simulation as a SourceAccount-credentialed
+    // entry, present in the auth array but needing no separate signature.
+    // toPendingAuthEntries correctly never hands that entry out to be
+    // signed, so signedEntries alone is missing it entirely. Soroban's host
+    // (soroban-env-host's AccountAuthorizationTracker::from_authorization_entry)
+    // only authorizes an address whose entry is actually present in the
+    // submitted transaction, so dropping it here would make the farmer's
+    // require_auth() fail on-chain even though the buyer signed correctly.
+    const buyer = Keypair.random().publicKey();
+    const freshAuth = [sourceAccountCredentialedEntry(), addressCredentialedEntry(buyer)];
+    const signedEntries = [addressCredentialedEntry(buyer)]; // only the buyer's, as toPendingAuthEntries would hand out
+
+    const merged = mergeSignedAuthEntries(freshAuth, signedEntries);
+
+    expect(merged).toHaveLength(2);
+    const credentialTypes = merged.map((e) => e.credentials.type).sort();
+    expect(credentialTypes).toEqual(["sorobanCredentialsAddress", "sorobanCredentialsSourceAccount"].sort());
+  });
+
+  it("uses the signed entry, not a fresh one, for an address-credentialed party", () => {
+    // The signed entry carries the original nonce/signature from the first
+    // simulation; a fresh re-simulation's address-credentialed entry for the
+    // same address carries a different nonce (a real, live re-simulation
+    // always mints a new one) and must never replace the already-signed one.
+    const buyer = Keypair.random().publicKey();
+    const freshUnsigned = addressCredentialedEntry(buyer, 999n);
+    const signed = addressCredentialedEntry(buyer, 1n);
+
+    const merged = mergeSignedAuthEntries([freshUnsigned], [signed]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.toXDR("base64")).toBe(signed.toXDR("base64"));
+    expect(merged[0]?.toXDR("base64")).not.toBe(freshUnsigned.toXDR("base64"));
+  });
+
+  it("returns just the signed entries when no party was satisfied by the source account", () => {
+    const farmer = Keypair.random().publicKey();
+    const buyer = Keypair.random().publicKey();
+    const signedEntries = [addressCredentialedEntry(farmer), addressCredentialedEntry(buyer)];
+
+    const merged = mergeSignedAuthEntries(signedEntries, signedEntries);
+
+    expect(merged).toHaveLength(2);
   });
 });
 

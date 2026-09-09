@@ -98,6 +98,59 @@ async function saveCursor(pool: Pool, cursor: string): Promise<void> {
 }
 
 /**
+ * Reconstructs which nodes actually contributed to the finalization of
+ * `symbol` at `ledger`. finalize_price (agrifeed-contract's ingest.rs) folds
+ * in every pending submission for the asset and clears them atomically in
+ * one transaction, so the contributing set for a given finalization is
+ * exactly the distinct nodes that submitted in the ledger range
+ * (previous finalization's ledger, this finalization's ledger] — the same
+ * window server.ts's /commodities nodesReporting count already uses, just
+ * resolved to actual addresses instead of a count. Deterministic and never
+ * fabricated: an empty result here means node_submissions genuinely has no
+ * matching rows (not yet indexed, or lost history), not "unknown."
+ */
+async function computeContributingNodes(pool: Pool, symbol: string, ledger: number): Promise<string[]> {
+  const previous = await pool.query<{ ledger: string }>(
+    `SELECT ledger FROM price_finalizations WHERE symbol = $1 AND ledger < $2 ORDER BY ledger DESC LIMIT 1`,
+    [symbol, ledger],
+  );
+  const previousLedger = previous.rows[0] ? Number(previous.rows[0].ledger) : 0;
+
+  const contributors = await pool.query<{ node_address: string }>(
+    `SELECT DISTINCT node_address FROM node_submissions
+     WHERE symbol = $1 AND ledger > $2 AND ledger <= $3
+     ORDER BY node_address`,
+    [symbol, previousLedger, ledger],
+  );
+  return contributors.rows.map((row) => row.node_address);
+}
+
+/**
+ * One-time repair for price_finalizations rows written before this fix
+ * existed, when poll.ts hardcoded contributing_nodes as []. Recomputes them
+ * with the same windowing computeContributingNodes uses for new events, from
+ * node_submissions data that was never lost, so this is real reconstruction,
+ * not fabrication. Only touches rows still empty, so it is safe to run on
+ * every indexer startup: already-backfilled or genuinely-empty rows are
+ * left untouched.
+ */
+export async function backfillContributingNodes(pool: Pool): Promise<void> {
+  const stale = await pool.query<{ id: number; symbol: string; ledger: string }>(
+    `SELECT id, symbol, ledger FROM price_finalizations WHERE contributing_nodes = '{}' ORDER BY symbol, ledger ASC`,
+  );
+  for (const row of stale.rows) {
+    const ledger = Number(row.ledger);
+    const contributingNodes = await computeContributingNodes(pool, row.symbol, ledger);
+    if (contributingNodes.length === 0) continue;
+    await pool.query(`UPDATE price_finalizations SET contributing_nodes = $2 WHERE id = $1`, [
+      row.id,
+      contributingNodes,
+    ]);
+    logger.info("backfilled contributing_nodes", { symbol: row.symbol, ledger, count: contributingNodes.length });
+  }
+}
+
+/**
  * Best-effort event indexing for data the oracle's read interface has no
  * getter for: the authorized node set and which nodes contributed to each
  * finalized price. This follows the common Soroban convention of a
@@ -107,6 +160,11 @@ async function saveCursor(pool: Pool, cursor: string): Promise<void> {
  * this repo, every handler below verifies the decoded shape before
  * writing a row, and skips (logging a warning) rather than guess.
  */
+// Watches exactly the one configured ORACLE_CONTRACT_ID and the one
+// configured PRICEFLOOR_CONTRACT_ID, not "every PriceFloor instance
+// AgriFeed has ever deployed" — see IndexerEnv.pricefloorContractId's doc
+// comment. This step's fixes correct how events from those two contracts
+// are decoded/disambiguated; they do not add multi-instance indexing.
 export async function pollEvents(env: IndexerEnv, pool: Pool): Promise<void> {
   const contractIds = [env.oracleContractId, env.pricefloorContractId].filter(
     (id): id is string => Boolean(id),
@@ -131,7 +189,7 @@ export async function pollEvents(env: IndexerEnv, pool: Pool): Promise<void> {
 
   for (const event of response.events) {
     try {
-      await handleEvent(event, pool);
+      await handleEvent(event, pool, env);
     } catch (err) {
       logger.warn("failed to index event, skipping", {
         txHash: event.txHash,
@@ -144,9 +202,10 @@ export async function pollEvents(env: IndexerEnv, pool: Pool): Promise<void> {
   logger.info("polled events", { count: response.events.length, cursor: response.cursor });
 }
 
-async function handleEvent(
+export async function handleEvent(
   event: StellarRpc.Api.EventResponse,
   pool: Pool,
+  env: Pick<IndexerEnv, "oracleContractId" | "pricefloorContractId">,
 ): Promise<void> {
   // `#[contractevent]` publishes topic[0] as the snake_case event name
   // (from the struct name: NodeAdded -> "node_added", PriceSubmitted ->
@@ -220,16 +279,74 @@ async function handleEvent(
         logger.warn("unrecognized price_finalized event shape", { txHash: event.txHash });
         return;
       }
-      // PriceFinalized carries only {asset, price, timestamp}, agrifeed-contract
-      // emits no contributor list on this event, so contributing_nodes is not
-      // derivable here. The API layer (server.ts /commodities) reconstructs it
-      // from node_submissions instead; this column is kept only as a record of
-      // that limitation, not filled in from the event.
+      // PriceFinalized carries only {asset, price, timestamp}; agrifeed-contract
+      // emits no contributor list on this event, so contributing_nodes is
+      // reconstructed here from node_submissions instead (see
+      // computeContributingNodes), not read off the event.
+      const contributingNodes = await computeContributingNodes(pool, symbol, event.ledger);
       await pool.query(
         `INSERT INTO price_finalizations (symbol, price, price_timestamp, ledger, tx_hash, contributing_nodes)
          VALUES ($1, $2, to_timestamp($3), $4, $5, $6)
          ON CONFLICT (tx_hash) DO NOTHING`,
-        [symbol, price, Number(timestamp), event.ledger, event.txHash, []],
+        [symbol, price, Number(timestamp), event.ledger, event.txHash, contributingNodes],
+      );
+      return;
+    }
+
+    // threshold_updated/retention_updated/commodity_added have no getter on
+    // the SEP-40 read interface (base/decimals/resolution/assets/price(s)/
+    // lastprice expose none of this), and only the oracle contract emits
+    // them, so they always route to oracle_events, keyed by the real
+    // #[topic] field each event struct declares (agrifeed-oracle's lib.rs):
+    // ThresholdUpdated{threshold: u32}, RetentionUpdated{retention: u32},
+    // CommodityAdded{asset: Asset}. None of these three carry non-topic
+    // fields, so `body`/`value` is always empty for them; the topic itself
+    // is the payload.
+    case "threshold_updated": {
+      if (!event.contractId) return;
+      const threshold = asBigInt(topics[1]);
+      if (threshold === null) {
+        logger.warn("unrecognized threshold_updated event shape", { txHash: event.txHash });
+        return;
+      }
+      await pool.query(
+        `INSERT INTO oracle_events (contract_id, event_type, ledger, tx_hash, data)
+         VALUES ($1, 'threshold_updated', $2, $3, $4)
+         ON CONFLICT (tx_hash, event_type) DO NOTHING`,
+        [event.contractId.contractId(), event.ledger, event.txHash, JSON.stringify({ threshold: threshold.toString() })],
+      );
+      return;
+    }
+
+    case "retention_updated": {
+      if (!event.contractId) return;
+      const retention = asBigInt(topics[1]);
+      if (retention === null) {
+        logger.warn("unrecognized retention_updated event shape", { txHash: event.txHash });
+        return;
+      }
+      await pool.query(
+        `INSERT INTO oracle_events (contract_id, event_type, ledger, tx_hash, data)
+         VALUES ($1, 'retention_updated', $2, $3, $4)
+         ON CONFLICT (tx_hash, event_type) DO NOTHING`,
+        [event.contractId.contractId(), event.ledger, event.txHash, JSON.stringify({ retention: retention.toString() })],
+      );
+      return;
+    }
+
+    case "commodity_added": {
+      if (!event.contractId) return;
+      const assetTopic = topics[1];
+      const symbol = Array.isArray(assetTopic) ? asString(assetTopic[1]) : null;
+      if (!symbol) {
+        logger.warn("unrecognized commodity_added event shape", { txHash: event.txHash });
+        return;
+      }
+      await pool.query(
+        `INSERT INTO oracle_events (contract_id, event_type, ledger, tx_hash, data)
+         VALUES ($1, 'commodity_added', $2, $3, $4)
+         ON CONFLICT (tx_hash, event_type) DO NOTHING`,
+        [event.contractId.contractId(), event.ledger, event.txHash, JSON.stringify({ symbol })],
       );
       return;
     }
@@ -240,7 +357,40 @@ async function handleEvent(
     // agripricefloor's actual event structs (agrifeed-contract@b11df10,
     // contracts/agripricefloor/src/lib.rs): Initialized -> "initialized",
     // Funded -> "funded", Settled -> "settled", Cancelled -> "cancelled".
-    case "initialized":
+    //
+    // "initialized" is ambiguous on its own: agrifeed-oracle's own
+    // Contract::initialize publishes an event with the exact same name (see
+    // agrifeed-oracle's lib.rs). Matching on fnName alone would let an
+    // oracle Initialized event land in pricefloor_events, whose event_type
+    // CHECK constraint happens to allow 'initialized' too, so it would not
+    // even fail loudly. Disambiguate by contract identity, which
+    // getEvents' own contractIds filter already guarantees is one of these
+    // two configured ids: route by *which* contract actually emitted it,
+    // not by the event's name.
+    case "initialized": {
+      if (!event.contractId) return;
+      const contractId = event.contractId.contractId();
+      const data = JSON.stringify(value, (_key, v) => (typeof v === "bigint" ? v.toString() : v));
+      if (contractId === env.oracleContractId) {
+        await pool.query(
+          `INSERT INTO oracle_events (contract_id, event_type, ledger, tx_hash, data)
+           VALUES ($1, 'initialized', $2, $3, $4)
+           ON CONFLICT (tx_hash, event_type) DO NOTHING`,
+          [contractId, event.ledger, event.txHash, data],
+        );
+      } else if (contractId === env.pricefloorContractId) {
+        await pool.query(
+          `INSERT INTO pricefloor_events (contract_id, event_type, ledger, tx_hash, data)
+           VALUES ($1, 'initialized', $2, $3, $4)
+           ON CONFLICT (tx_hash, event_type) DO NOTHING`,
+          [contractId, event.ledger, event.txHash, data],
+        );
+      } else {
+        logger.warn("initialized event from unrecognized contract, skipping", { contractId, txHash: event.txHash });
+      }
+      return;
+    }
+
     case "funded":
     case "settled":
     case "cancelled": {

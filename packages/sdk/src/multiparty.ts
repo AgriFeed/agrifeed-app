@@ -155,6 +155,29 @@ export function withAuthEntries(
 }
 
 /**
+ * Reunites a fresh simulation's full auth array with the entries each party
+ * actually signed. Soroban's host only authorizes an address whose
+ * SorobanAuthorizationEntry is present in the submitted transaction,
+ * including a SourceAccount-credentialed one, present but signature-less,
+ * satisfied by the envelope signature alone (verified against
+ * soroban-env-host's `AccountAuthorizationTracker::from_authorization_entry`,
+ * which builds a tracker only from entries actually in the array). Those
+ * entries are never in `signedEntries` (`toPendingAuthEntries` deliberately
+ * never hands them out to sign), so they are taken from `freshAuth` here, or
+ * that party's authorization silently vanishes from the final transaction.
+ * Safe to take from a fresh simulation, unlike the address-credentialed
+ * entries: a SourceAccount entry carries no nonce, so it cannot go stale or
+ * invalidate anything already signed.
+ */
+export function mergeSignedAuthEntries(
+  freshAuth: xdr.SorobanAuthorizationEntry[],
+  signedEntries: xdr.SorobanAuthorizationEntry[],
+): xdr.SorobanAuthorizationEntry[] {
+  const sourceAccountEntries = freshAuth.filter((entry) => inspectAuthEntry(entry).address === null);
+  return [...sourceAccountEntries, ...signedEntries];
+}
+
+/**
  * Submits a multi-party invocation once every entry `prepareMultiPartyInvocation`
  * returned has been independently signed (in order, matching
  * `pendingAuthEntries`). Re-simulates only to re-derive the current
@@ -180,7 +203,8 @@ export async function submitMultiPartyInvocation(
     throw new OracleError(`re-simulation before submit failed: ${simulated.error}`);
   }
 
-  const authEntries = signedAuthEntryXdrs.map((entryXdr) => xdr.SorobanAuthorizationEntry.fromXDR(entryXdr, "base64"));
+  const signedEntries = signedAuthEntryXdrs.map((entryXdr) => xdr.SorobanAuthorizationEntry.fromXDR(entryXdr, "base64"));
+  const authEntries = mergeSignedAuthEntries(simulated.result?.auth ?? [], signedEntries);
   const builder = StellarRpc.assembleTransaction(originalTx, simulated);
   const built = withAuthEntries(builder, originalTx, authEntries);
 
