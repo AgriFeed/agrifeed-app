@@ -19,6 +19,7 @@ jobs:
       - run: pnpm --filter @agrifeed/sdk build
       - run: pnpm typecheck
       - run: pnpm lint
+      - run: pnpm test
       - run: pnpm build
 
   indexer-migration:

@@ -1,15 +1,8 @@
-import {
-  Account,
-  Contract,
-  nativeToScVal,
-  rpc as StellarRpc,
-  scValToNative,
-  TransactionBuilder,
-  xdr,
-} from "@stellar/stellar-sdk";
+import { Contract, nativeToScVal, rpc as StellarRpc, TransactionBuilder, xdr } from "@stellar/stellar-sdk";
 import { OracleError } from "./types.js";
 import type { AgriPriceFloorConfig, AgriPriceFloorState, Asset } from "./types.js";
 import type { SignAndSend } from "./wallet.js";
+import { submitAndConfirm } from "./soroban-tx.js";
 
 // Mirrors contracts/agripricefloor/src/errors.rs; keep in sync with that enum.
 const CONTRACT_ERROR_MESSAGES: Record<number, string> = {
@@ -38,9 +31,12 @@ function friendlyContractError(err: unknown): Error {
 /**
  * Builds, has the wallet sign, and submits a contract-invoking transaction,
  * then polls the RPC server until the transaction reaches a final status.
- * `@stellar/stellar-sdk` v17 does not ship a ready-made polling helper for
- * this exact flow, so it is implemented directly against
- * `server.sendTransaction` / `server.getTransaction`.
+ * Single-signer only: `sourcePublicKey` is both the transaction's source
+ * account and the only address `signAndSend` will authorize. A call that
+ * needs more than one address's authorization (AgriPriceFloor's
+ * `initialize`) cannot go through this path, see
+ * `multiparty.ts`'s `prepareMultiPartyInvocation`/
+ * `submitMultiPartyInvocation` instead.
  */
 async function invokeAndConfirm(
   config: AgriPriceFloorConfig,
@@ -64,31 +60,9 @@ async function invokeAndConfirm(
 
     const prepared = await server.prepareTransaction(built);
     const signedXdr = await signAndSend(prepared.toXDR());
+    const signedTx = TransactionBuilder.fromXDR(signedXdr, config.networkPassphrase);
 
-    const { TransactionBuilder: TB } = await import("@stellar/stellar-sdk");
-    const signedTx = TB.fromXDR(signedXdr, config.networkPassphrase);
-
-    const sendResult = await server.sendTransaction(signedTx);
-    if (sendResult.status === "ERROR") {
-      throw new OracleError(`${method} submission failed: ${JSON.stringify(sendResult.errorResult)}`);
-    }
-
-    const hash = sendResult.hash;
-    const pollIntervalMs = 1500;
-    const maxAttempts = 20;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const result = await server.getTransaction(hash);
-      if (result.status === StellarRpc.Api.GetTransactionStatus.SUCCESS) {
-        return result.returnValue;
-      }
-      if (result.status === StellarRpc.Api.GetTransactionStatus.FAILED) {
-        throw new OracleError(`${method} transaction failed on-chain: ${hash}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-    }
-
-    throw new OracleError(`${method} transaction ${hash} did not confirm in time`);
+    return await submitAndConfirm(server, signedTx, method);
   } catch (err) {
     throw friendlyContractError(err);
   }
@@ -114,6 +88,21 @@ export interface InitializePriceFloorParams {
   oracle: string;
 }
 
+/**
+ * Initializes a fresh AgriPriceFloor instance.
+ *
+ * The contract requires independent authorization from *both*
+ * `params.farmer` and `params.buyer` (`farmer.require_auth()` and
+ * `buyer.require_auth()`). This function signs with exactly one signer,
+ * `callerPublicKey`/`signAndSend`, so it can only ever succeed when farmer,
+ * buyer, and the caller are the same connected wallet, the on-chain auth
+ * check does not relax for a same-wallet demo case, it just happens to be
+ * satisfiable by one signature when all three addresses are identical.
+ * For a real deal where farmer and buyer are different people, use
+ * `prepareMultiPartyInvocation`/`submitMultiPartyInvocation` from
+ * `multiparty.ts` instead, which collects an independent signature from
+ * each party before submitting.
+ */
 export async function initialize(
   config: AgriPriceFloorConfig,
   params: InitializePriceFloorParams,
@@ -138,19 +127,22 @@ export async function initialize(
   );
 }
 
+/**
+ * Builds the argument list for `fund(buyer: Address, amount: i128)`.
+ * Exported separately, mirroring `cancelArgs`, so this encoding can be
+ * asserted directly in a unit test without a live RPC call.
+ */
+export function fundArgs(buyer: string, amount: bigint): xdr.ScVal[] {
+  return [nativeToScVal(buyer, { type: "address" }), nativeToScVal(amount, { type: "i128" })];
+}
+
 export async function fund(
   config: AgriPriceFloorConfig,
   buyer: string,
   amount: bigint,
   signAndSend: SignAndSend,
 ): Promise<void> {
-  await invokeAndConfirm(
-    config,
-    "fund",
-    [nativeToScVal(buyer, { type: "address" }), nativeToScVal(amount, { type: "i128" })],
-    buyer,
-    signAndSend,
-  );
+  await invokeAndConfirm(config, "fund", fundArgs(buyer, amount), buyer, signAndSend);
 }
 
 export async function settle(
@@ -161,12 +153,22 @@ export async function settle(
   await invokeAndConfirm(config, "settle", [], callerPublicKey, signAndSend);
 }
 
+/**
+ * Builds the argument list for `cancel(caller: Address)`. Exported
+ * separately from `cancel()` so the encoding itself, one address argument,
+ * matching the contract's real one-argument signature, can be asserted
+ * directly in a unit test without needing a live RPC call.
+ */
+export function cancelArgs(callerPublicKey: string): xdr.ScVal[] {
+  return [nativeToScVal(callerPublicKey, { type: "address" })];
+}
+
 export async function cancel(
   config: AgriPriceFloorConfig,
   callerPublicKey: string,
   signAndSend: SignAndSend,
 ): Promise<void> {
-  await invokeAndConfirm(config, "cancel", [], callerPublicKey, signAndSend);
+  await invokeAndConfirm(config, "cancel", cancelArgs(callerPublicKey), callerPublicKey, signAndSend);
 }
 
 export async function getState(

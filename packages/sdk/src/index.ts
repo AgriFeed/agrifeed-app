@@ -2,6 +2,8 @@ export * from "./types.js";
 export * from "./format.js";
 export * as oracle from "./oracle.js";
 export * as pricefloor from "./pricefloor.js";
+export * as multiparty from "./multiparty.js";
+export * as deploy from "./deploy.js";
 
 // Freighter wallet functions are NOT re-exported here. @stellar/freighter-api
 // is a browser-only bundle (it talks to the extension via window), and

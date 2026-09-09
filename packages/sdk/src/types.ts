@@ -68,6 +68,46 @@ export interface AgriPriceFloorConfig {
   networkPassphrase: string;
 }
 
+/**
+ * AgriPriceFloor is one-instance-per-deal (see agrifeed-contract's
+ * docs/testnet-deployment.md): every real deal is a fresh contract
+ * instance deployed from a shared WASM hash, never a reused singleton.
+ * `AgriPriceFloorConfig.contractId` above is for calling an *already
+ * deployed* instance; this config is for deploying a *new* one, and
+ * carries no `contractId` because none exists yet.
+ */
+export interface AgriPriceFloorDeploymentConfig {
+  wasmHash: string;
+  rpcUrl: string;
+  networkPassphrase: string;
+}
+
+/**
+ * One address's still-unsigned share of a multi-party Soroban invocation,
+ * produced by `prepareMultiPartyInvocation` and handed to that address's
+ * own signer (its own Freighter session, not the invocation's initiator).
+ */
+export interface PendingAuthEntry {
+  /** The G... address this entry authorizes on behalf of. */
+  address: string;
+  /** Base64 XDR of the unsigned `SorobanAuthorizationEntry`. */
+  entryXdr: string;
+}
+
+/**
+ * Everything needed to submit a multi-party invocation once every
+ * `pendingAuthEntries` member has been independently signed. `transactionXdr`
+ * is the *unsimulated* transaction (built once, never rebuilt), preserved
+ * so `submitMultiPartyInvocation` can re-derive resource fees without
+ * touching the nonces baked into the already-signed auth entries: a second
+ * simulation would mint fresh nonces and invalidate signatures collected
+ * against the first one.
+ */
+export interface PreparedMultiPartyInvocation {
+  transactionXdr: string;
+  pendingAuthEntries: PendingAuthEntry[];
+}
+
 export type AgriPriceFloorState = {
   farmer: string;
   buyer: string;
