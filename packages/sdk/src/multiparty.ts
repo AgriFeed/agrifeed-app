@@ -87,6 +87,16 @@ export function toPendingAuthEntries(entries: xdr.SorobanAuthorizationEntry[]): 
 }
 
 /**
+ * The complement of `toPendingAuthEntries`: every SourceAccount-credentialed
+ * entry a simulation returned, as base64 XDR, preserved verbatim so
+ * `submitMultiPartyInvocation` can resubmit them unchanged (they carry no
+ * nonce, so they never go stale).
+ */
+function toSourceAccountAuthEntryXdrs(entries: xdr.SorobanAuthorizationEntry[]): string[] {
+  return entries.filter((entry) => inspectAuthEntry(entry).address === null).map((entry) => entry.toXDR("base64"));
+}
+
+/**
  * Builds and simulates a contract invocation that may require more than
  * one address's authorization. Returns the raw (unsimulated) transaction
  * plus one `PendingAuthEntry` per address that must sign, so each can be
@@ -121,9 +131,11 @@ export async function prepareMultiPartyInvocation(
     throw new OracleError(`simulation of ${method} did not succeed`);
   }
 
+  const allAuthEntries = simulated.result?.auth ?? [];
   return {
     transactionXdr: built.toXDR(),
-    pendingAuthEntries: toPendingAuthEntries(simulated.result?.auth ?? []),
+    pendingAuthEntries: toPendingAuthEntries(allAuthEntries),
+    sourceAccountAuthEntryXdrs: toSourceAccountAuthEntryXdrs(allAuthEntries),
   };
 }
 
@@ -155,41 +167,57 @@ export function withAuthEntries(
 }
 
 /**
- * Reunites a fresh simulation's full auth array with the entries each party
- * actually signed. Soroban's host only authorizes an address whose
- * SorobanAuthorizationEntry is present in the submitted transaction,
- * including a SourceAccount-credentialed one, present but signature-less,
- * satisfied by the envelope signature alone (verified against
- * soroban-env-host's `AccountAuthorizationTracker::from_authorization_entry`,
- * which builds a tracker only from entries actually in the array). Those
- * entries are never in `signedEntries` (`toPendingAuthEntries` deliberately
- * never hands them out to sign), so they are taken from `freshAuth` here, or
- * that party's authorization silently vanishes from the final transaction.
- * Safe to take from a fresh simulation, unlike the address-credentialed
- * entries: a SourceAccount entry carries no nonce, so it cannot go stale or
- * invalidate anything already signed.
+ * Reunites the preserved SourceAccount-credentialed entries from
+ * `prepareMultiPartyInvocation` with the entries each party actually signed.
+ * Soroban's host only authorizes an address whose SorobanAuthorizationEntry
+ * is present in the submitted transaction, including a SourceAccount-
+ * credentialed one, present but signature-less, satisfied by the envelope
+ * signature alone (verified against soroban-env-host's
+ * `AccountAuthorizationTracker::from_authorization_entry`, which builds a
+ * tracker only from entries actually in the array). Those entries are never
+ * in `signedEntries` (`toPendingAuthEntries` deliberately never hands them
+ * out to sign), so they must come from here, or that party's authorization
+ * silently vanishes from the final transaction. `sourceAccountEntries` must
+ * be the ones `prepareMultiPartyInvocation` returned, not a fresh
+ * simulation's: see `submitMultiPartyInvocation`'s doc comment for why.
  */
 export function mergeSignedAuthEntries(
-  freshAuth: xdr.SorobanAuthorizationEntry[],
+  sourceAccountEntries: xdr.SorobanAuthorizationEntry[],
   signedEntries: xdr.SorobanAuthorizationEntry[],
 ): xdr.SorobanAuthorizationEntry[] {
-  const sourceAccountEntries = freshAuth.filter((entry) => inspectAuthEntry(entry).address === null);
-  return [...sourceAccountEntries, ...signedEntries];
+  return [...sourceAccountEntries.filter((entry) => inspectAuthEntry(entry).address === null), ...signedEntries];
 }
 
 /**
  * Submits a multi-party invocation once every entry `prepareMultiPartyInvocation`
  * returned has been independently signed (in order, matching
- * `pendingAuthEntries`). Re-simulates only to re-derive the current
- * resource fee/footprint, never to re-derive auth, then rebuilds the
- * operation with the caller-supplied signed entries, has the source
- * account sign the outer transaction envelope via `signAndSend`, submits,
- * and polls for confirmation exactly like the single-signer path.
+ * `pendingAuthEntries`).
+ *
+ * Re-derives the current resource fee/footprint by re-simulating, since real
+ * time (a whole independent signing round, possibly minutes or more) has
+ * passed since `prepareMultiPartyInvocation`'s own simulation. That
+ * re-simulation must never run against a *bare, auth-less* copy of the
+ * transaction: Soroban RPC simulates a transaction whose operation carries
+ * no auth entries in "recording" mode, which mints a brand-new, random
+ * nonce for every address-credentialed requirement, different from the one
+ * already baked into the entry each party actually signed. The resulting
+ * resource footprint would then only cover that fresh, unused nonce's
+ * ledger key, not the real signed one, and the submitted transaction traps
+ * at execution with "trying to access nonce outside of the footprint" —
+ * confirmed against a real Testnet failure during F-04 live verification,
+ * on every call where any real time separated prepare from submit (i.e.
+ * every real two-party flow, the entire reason this three-phase design
+ * exists). So instead, the operation is primed with the exact entries about
+ * to be submitted (the preserved, nonce-free SourceAccount entries plus the
+ * now-signed, nonce-fixed ones) *before* simulating: Soroban then simulates
+ * in enforcing mode against those exact nonces, so the fresh footprint/fee
+ * estimate actually matches what gets submitted.
  */
 export async function submitMultiPartyInvocation(
   config: AgriPriceFloorConfig,
   transactionXdr: string,
   signedAuthEntryXdrs: string[],
+  sourceAccountAuthEntryXdrs: string[],
   signAndSend: SignAndSend,
 ): Promise<xdr.ScVal | undefined> {
   const server = new StellarRpc.Server(config.rpcUrl);
@@ -198,15 +226,24 @@ export async function submitMultiPartyInvocation(
     throw new OracleError("expected a single-operation Transaction, not a fee-bump transaction");
   }
 
-  const simulated = await server.simulateTransaction(originalTx);
+  const signedEntries = signedAuthEntryXdrs.map((entryXdr) => xdr.SorobanAuthorizationEntry.fromXDR(entryXdr, "base64"));
+  const sourceAccountEntries = sourceAccountAuthEntryXdrs.map((entryXdr) =>
+    xdr.SorobanAuthorizationEntry.fromXDR(entryXdr, "base64"),
+  );
+  const authEntries = mergeSignedAuthEntries(sourceAccountEntries, signedEntries);
+  const primedTx = withAuthEntries(
+    TransactionBuilder.cloneFrom(originalTx, { fee: originalTx.fee }),
+    originalTx,
+    authEntries,
+  );
+
+  const simulated = await server.simulateTransaction(primedTx);
   if (StellarRpc.Api.isSimulationError(simulated)) {
     throw new OracleError(`re-simulation before submit failed: ${simulated.error}`);
   }
 
-  const signedEntries = signedAuthEntryXdrs.map((entryXdr) => xdr.SorobanAuthorizationEntry.fromXDR(entryXdr, "base64"));
-  const authEntries = mergeSignedAuthEntries(simulated.result?.auth ?? [], signedEntries);
-  const builder = StellarRpc.assembleTransaction(originalTx, simulated);
-  const built = withAuthEntries(builder, originalTx, authEntries);
+  const builder = StellarRpc.assembleTransaction(primedTx, simulated);
+  const built = withAuthEntries(builder, primedTx, authEntries);
 
   const signedXdr = await signAndSend(built.toXDR());
   const signedTx = TransactionBuilder.fromXDR(signedXdr, config.networkPassphrase);
