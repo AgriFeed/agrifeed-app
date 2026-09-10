@@ -26,9 +26,8 @@ const STATUS: Record<
 export type DealDisplayStatus = keyof typeof STATUS;
 
 /**
- * Deal lifecycle status badge (Phase 3 Step 10). Not wired into any page
- * yet — this is the shared vocabulary the Price Protection redesign will
- * consume. "signed" (an individual party's auth entry collected — see
+ * Deal lifecycle status badge (Phase 3 Step 10), consumed by NewDealFlow.tsx.
+ * "signed" (an individual party's auth entry collected — see
  * ParticipantAuthStatus) and "confirmed" (the assembled transaction has
  * actually landed on-chain) are intentionally never the same badge.
  */

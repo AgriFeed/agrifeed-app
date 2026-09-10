@@ -104,6 +104,7 @@ export function DemoFlow({ publicKey }: { publicKey: string }) {
           <button
             key={s.id}
             onClick={() => setStep(s.id)}
+            aria-current={step === s.id ? "step" : undefined}
             className={`border px-3 py-1.5 text-sm transition-colors ${
               step === s.id
                 ? "border-accent text-accent"
@@ -244,7 +245,7 @@ function SettleForm({ publicKey, config, signAndSend }: StepProps) {
   const { pending, result, error, txHash, run } = useAction();
   return (
     <div>
-      <h3 className="text-sm font-medium text-ink-primary">Settle</h3>
+      <h2 className="text-sm font-medium text-ink-primary">Settle</h2>
       <p className="mt-1 text-sm text-ink-muted">
         Anyone may call settle once the agreement has matured and the oracle has a finalized
         price for the configured commodity. It pays the buyer&apos;s collateral out: to the
@@ -272,7 +273,7 @@ function CancelForm({ publicKey, config, signAndSend }: StepProps) {
   const { pending, result, error, txHash, run } = useAction();
   return (
     <div>
-      <h3 className="text-sm font-medium text-ink-primary">Cancel</h3>
+      <h2 className="text-sm font-medium text-ink-primary">Cancel</h2>
       <p className="mt-1 text-sm text-ink-muted">
         Only the stored farmer or buyer may cancel, and only once the contract&apos;s grace-period
         rules allow it (an unfunded agreement past maturity, or a funded one whose settlement

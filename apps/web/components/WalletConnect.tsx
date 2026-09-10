@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { connectFreighter, isFreighterInstalled } from "@agrifeed/sdk/wallet";
-import { truncateAddress } from "@/lib/address";
+import { IdentifierDisplay } from "@/components/IdentifierDisplay";
 
 export function WalletConnect({ onConnect }: { onConnect: (publicKey: string) => void }) {
   const [publicKey, setPublicKey] = useState<string | null>(null);
@@ -32,7 +32,7 @@ export function WalletConnect({ onConnect }: { onConnect: (publicKey: string) =>
     return (
       <div className="ticker-row">
         <span className="text-sm text-ink-muted">Connected</span>
-        <span className="font-mono text-sm text-ink-primary">{truncateAddress(publicKey)}</span>
+        <IdentifierDisplay kind="address" value={publicKey} />
       </div>
     );
   }
@@ -46,7 +46,7 @@ export function WalletConnect({ onConnect }: { onConnect: (publicKey: string) =>
       >
         {connecting ? "Connecting…" : "Connect Freighter"}
       </button>
-      {error && <p className="mt-2 text-sm text-price-down">{error}</p>}
+      {error && <p className="mt-2 text-sm text-status-error">{error}</p>}
     </div>
   );
 }
