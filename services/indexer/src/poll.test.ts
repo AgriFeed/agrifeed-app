@@ -30,6 +30,35 @@ const ORACLE_CONTRACT_ID = "CBKAREHZ2ZXQW5RKPVERNL52AER2G45XVXQ7PPGLQL7FXJZ6VXRN
 const PRICEFLOOR_CONTRACT_ID = "CDHPDF4TZDJVBFGSOGVTNEKQNNJQR326JSATYXY7ZWD63L6PS2NTJB47";
 const ENV = { oracleContractId: ORACLE_CONTRACT_ID, pricefloorContractId: PRICEFLOOR_CONTRACT_ID };
 
+// Two genuinely, independently deployed AND initialized AgriPriceFloor
+// instances on Stellar Testnet (Phase 4 Step 2's own real E2E evidence,
+// deployed/initialized via the stellar CLI, see that step's implementation
+// report for the exact commands and transaction hashes). Real contract ids,
+// real farmer/buyer accounts, real terms, not fabricated: this is the
+// "deterministic fixture/test path for at least two PriceFloor instances"
+// requirement, using the actual chain data rather than invented strings.
+const PF_INSTANCE_1 = "CD2AX7NTIDGLWBYOY4Y4EYFLPTNCPACXDDCO3XSN7BAEB74UWVE7JCQN";
+const PF_INSTANCE_1_FARMER = "GCPM65RUTWWMHM2VBCJDLI2CBA3JDPPMG7QGABAW7DYJLLC6NAIIFR62";
+const PF_INSTANCE_1_BUYER = "GC2ZGBULIFV5K5JBNT7DFDBVYFRASYEHX4RHS46LDPFHI2W46CMACTO3";
+const PF_INSTANCE_1_INIT_TX = "87e9b50c0150122c187d263b45d9cae4001f21dcd7482588328e311a48986283";
+const PF_INSTANCE_1_FUND_TX = "03a0bb979878f4a8d2819b4432bcacde37cedb365c1dc1f3100929b308158b5d";
+
+const PF_INSTANCE_2 = "CC4YDCQJL4PYXJGC3QSPW3WXNQMEVL6QDJEHH3E556EOEEPUN4RVC6P7";
+const PF_INSTANCE_2_FARMER = "GDWU5YGNHNL3ZW35732OU5C2ORTNYFM32YVL2LMTC4UAWHXFS3MNTW7T";
+const PF_INSTANCE_2_BUYER = "GABZIONIHNKUA2YLWDWESPJC7R23UQJ2GPM6CM4RSZJQ7VZ73WQ25AES";
+const PF_INSTANCE_2_INIT_TX = "5cb837d1300bd962fbf3b617cb9e213a4af97adfd7e16b3b2ff46022997ba6c5";
+
+/** Registers a PriceFloor instance the same way registerInstance() would
+ * after a real RPC verification, without hitting the network in these
+ * offline handleEvent tests: seeds the row directly at 'registered', which
+ * is exactly the state registerInstance leaves it in. */
+async function seedRegisteredInstance(contractId: string, ledger = 1): Promise<void> {
+  await pool.query(
+    `INSERT INTO pricefloor_instances (contract_id, status, registered_at_ledger) VALUES ($1, 'registered', $2)`,
+    [contractId, ledger],
+  );
+}
+
 // Real, valid-checksum account addresses (Keypair.random(), matching this
 // repo's existing test convention in packages/sdk/src/*.test.ts), generated
 // once for the whole file: only their validity as real strkeys and their
@@ -54,7 +83,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await pool.query(
-    "TRUNCATE nodes, node_submissions, price_finalizations, pricefloor_events, oracle_events, price_history, commodities, indexer_cursor CASCADE",
+    "TRUNCATE nodes, node_submissions, price_finalizations, pricefloor_events, oracle_events, price_history, commodities, indexer_cursor, pricefloor_instances CASCADE",
   );
 });
 
@@ -130,6 +159,64 @@ function priceFinalizedEvent(opts: { ledger: number; txHash: string; symbol: str
       price: nativeToScVal(opts.price, { type: "i128" }),
       timestamp: nativeToScVal(opts.timestamp, { type: "u64" }),
     },
+  });
+}
+
+function pricefloorInitializedEvent(opts: {
+  contractId: string;
+  ledger: number;
+  txHash: string;
+  farmer: string;
+  buyer: string;
+  commodity: string;
+  floorPrice: bigint;
+  notional: bigint;
+  maturityTs: bigint;
+}) {
+  return makeEvent({
+    contractId: opts.contractId,
+    ledger: opts.ledger,
+    txHash: opts.txHash,
+    topics: [
+      xdr.ScVal.scvSymbol("initialized"),
+      nativeToScVal(opts.farmer, { type: "address" }),
+      nativeToScVal(opts.buyer, { type: "address" }),
+    ],
+    data: {
+      commodity: assetTopicScVal(opts.commodity),
+      floor_price: nativeToScVal(opts.floorPrice, { type: "i128" }),
+      notional: nativeToScVal(opts.notional, { type: "i128" }),
+      maturity_ts: nativeToScVal(opts.maturityTs, { type: "u64" }),
+    },
+  });
+}
+
+function pricefloorFundedEvent(opts: { contractId: string; ledger: number; txHash: string; buyer: string; amount: bigint }) {
+  return makeEvent({
+    contractId: opts.contractId,
+    ledger: opts.ledger,
+    txHash: opts.txHash,
+    topics: [xdr.ScVal.scvSymbol("funded"), nativeToScVal(opts.buyer, { type: "address" })],
+    data: { amount: nativeToScVal(opts.amount, { type: "i128" }) },
+  });
+}
+
+function pricefloorSettledEvent(opts: { contractId: string; ledger: number; txHash: string; farmer: string; payout: bigint; marketPrice: bigint }) {
+  return makeEvent({
+    contractId: opts.contractId,
+    ledger: opts.ledger,
+    txHash: opts.txHash,
+    topics: [xdr.ScVal.scvSymbol("settled"), nativeToScVal(opts.farmer, { type: "address" })],
+    data: { payout: nativeToScVal(opts.payout, { type: "i128" }), market_price: nativeToScVal(opts.marketPrice, { type: "i128" }) },
+  });
+}
+
+function pricefloorCancelledEvent(opts: { contractId: string; ledger: number; txHash: string; caller: string }) {
+  return makeEvent({
+    contractId: opts.contractId,
+    ledger: opts.ledger,
+    txHash: opts.txHash,
+    topics: [xdr.ScVal.scvSymbol("cancelled"), nativeToScVal(opts.caller, { type: "address" })],
   });
 }
 
@@ -412,5 +499,278 @@ describe("handleEvent: existing PriceFloor event handling still works (regressio
     const row = await pool.query(`SELECT address, removed_at FROM nodes WHERE address = $1`, [node]);
     expect(row.rows).toHaveLength(1);
     expect(row.rows[0].removed_at).toBeNull();
+  });
+});
+
+describe("handleEvent: Phase 4 multi-instance PriceFloor discovery", () => {
+  it("indexes two independently registered PriceFloor instances without confusing their state (real Testnet fixture)", async () => {
+    await seedRegisteredInstance(PF_INSTANCE_1);
+    await seedRegisteredInstance(PF_INSTANCE_2);
+
+    await handleEvent(
+      pricefloorInitializedEvent({
+        contractId: PF_INSTANCE_1,
+        ledger: nextLedger(),
+        txHash: PF_INSTANCE_1_INIT_TX,
+        farmer: PF_INSTANCE_1_FARMER,
+        buyer: PF_INSTANCE_1_BUYER,
+        commodity: "COCOA",
+        floorPrice: 61880000000n,
+        notional: 10000000n,
+        maturityTs: 1791626527n,
+      }),
+      pool,
+      ENV,
+    );
+    await handleEvent(
+      pricefloorInitializedEvent({
+        contractId: PF_INSTANCE_2,
+        ledger: nextLedger(),
+        txHash: PF_INSTANCE_2_INIT_TX,
+        farmer: PF_INSTANCE_2_FARMER,
+        buyer: PF_INSTANCE_2_BUYER,
+        commodity: "COFFEE",
+        floorPrice: 48950000000n,
+        notional: 5000000n,
+        maturityTs: 1792922556n,
+      }),
+      pool,
+      ENV,
+    );
+
+    const rows = await pool.query<{
+      contract_id: string;
+      status: string;
+      farmer: string;
+      buyer: string;
+      commodity: unknown;
+      floor_price: string;
+      notional: string;
+    }>(`SELECT contract_id, status, farmer, buyer, commodity, floor_price, notional FROM pricefloor_instances ORDER BY contract_id`);
+
+    expect(rows.rows).toHaveLength(2);
+    const byId = new Map(rows.rows.map((r) => [r.contract_id, r]));
+
+    const instance1 = byId.get(PF_INSTANCE_1);
+    expect(instance1?.status).toBe("initialized");
+    expect(instance1?.farmer).toBe(PF_INSTANCE_1_FARMER);
+    expect(instance1?.buyer).toBe(PF_INSTANCE_1_BUYER);
+    expect(instance1?.commodity).toEqual(["Other", "COCOA"]);
+    expect(instance1?.floor_price).toBe("61880000000");
+    expect(instance1?.notional).toBe("10000000");
+
+    const instance2 = byId.get(PF_INSTANCE_2);
+    expect(instance2?.status).toBe("initialized");
+    expect(instance2?.farmer).toBe(PF_INSTANCE_2_FARMER);
+    expect(instance2?.buyer).toBe(PF_INSTANCE_2_BUYER);
+    expect(instance2?.commodity).toEqual(["Other", "COFFEE"]);
+    expect(instance2?.floor_price).toBe("48950000000");
+    expect(instance2?.notional).toBe("5000000");
+  });
+
+  it("keeps events from two different instances isolated in pricefloor_events by contract_id", async () => {
+    await seedRegisteredInstance(PF_INSTANCE_1);
+    await seedRegisteredInstance(PF_INSTANCE_2);
+
+    await handleEvent(
+      pricefloorInitializedEvent({
+        contractId: PF_INSTANCE_1,
+        ledger: nextLedger(),
+        txHash: PF_INSTANCE_1_INIT_TX,
+        farmer: PF_INSTANCE_1_FARMER,
+        buyer: PF_INSTANCE_1_BUYER,
+        commodity: "COCOA",
+        floorPrice: 61880000000n,
+        notional: 10000000n,
+        maturityTs: 1791626527n,
+      }),
+      pool,
+      ENV,
+    );
+    await handleEvent(
+      pricefloorInitializedEvent({
+        contractId: PF_INSTANCE_2,
+        ledger: nextLedger(),
+        txHash: PF_INSTANCE_2_INIT_TX,
+        farmer: PF_INSTANCE_2_FARMER,
+        buyer: PF_INSTANCE_2_BUYER,
+        commodity: "COFFEE",
+        floorPrice: 48950000000n,
+        notional: 5000000n,
+        maturityTs: 1792922556n,
+      }),
+      pool,
+      ENV,
+    );
+    await handleEvent(
+      pricefloorFundedEvent({ contractId: PF_INSTANCE_1, ledger: nextLedger(), txHash: PF_INSTANCE_1_FUND_TX, buyer: PF_INSTANCE_1_BUYER, amount: 100000000n }),
+      pool,
+      ENV,
+    );
+
+    const instance1Events = await pool.query<{ event_type: string }>(
+      `SELECT event_type FROM pricefloor_events WHERE contract_id = $1 ORDER BY event_type`,
+      [PF_INSTANCE_1],
+    );
+    const instance2Events = await pool.query<{ event_type: string }>(
+      `SELECT event_type FROM pricefloor_events WHERE contract_id = $1 ORDER BY event_type`,
+      [PF_INSTANCE_2],
+    );
+
+    expect(instance1Events.rows.map((r) => r.event_type)).toEqual(["funded", "initialized"]);
+    expect(instance2Events.rows.map((r) => r.event_type)).toEqual(["initialized"]);
+
+    // Funding instance 1 must never advance instance 2's status.
+    const instance2Row = await pool.query<{ status: string }>(
+      `SELECT status FROM pricefloor_instances WHERE contract_id = $1`,
+      [PF_INSTANCE_2],
+    );
+    expect(instance2Row.rows[0]?.status).toBe("initialized");
+
+    const instance1Row = await pool.query<{ status: string }>(
+      `SELECT status FROM pricefloor_instances WHERE contract_id = $1`,
+      [PF_INSTANCE_1],
+    );
+    expect(instance1Row.rows[0]?.status).toBe("funded");
+  });
+
+  it("advances funded -> settled -> cancelled only for the instance the event actually came from", async () => {
+    await seedRegisteredInstance(PF_INSTANCE_1);
+    await seedRegisteredInstance(PF_INSTANCE_2);
+    await handleEvent(
+      pricefloorInitializedEvent({
+        contractId: PF_INSTANCE_1,
+        ledger: nextLedger(),
+        txHash: "tx-iso-init-1",
+        farmer: PF_INSTANCE_1_FARMER,
+        buyer: PF_INSTANCE_1_BUYER,
+        commodity: "COCOA",
+        floorPrice: 100n,
+        notional: 10n,
+        maturityTs: 2000000000n,
+      }),
+      pool,
+      ENV,
+    );
+    await handleEvent(
+      pricefloorInitializedEvent({
+        contractId: PF_INSTANCE_2,
+        ledger: nextLedger(),
+        txHash: "tx-iso-init-2",
+        farmer: PF_INSTANCE_2_FARMER,
+        buyer: PF_INSTANCE_2_BUYER,
+        commodity: "COFFEE",
+        floorPrice: 200n,
+        notional: 20n,
+        maturityTs: 2000000000n,
+      }),
+      pool,
+      ENV,
+    );
+
+    await handleEvent(
+      pricefloorSettledEvent({ contractId: PF_INSTANCE_1, ledger: nextLedger(), txHash: "tx-iso-settled-1", farmer: PF_INSTANCE_1_FARMER, payout: 5n, marketPrice: 90n }),
+      pool,
+      ENV,
+    );
+    await handleEvent(
+      pricefloorCancelledEvent({ contractId: PF_INSTANCE_2, ledger: nextLedger(), txHash: "tx-iso-cancelled-2", caller: PF_INSTANCE_2_FARMER }),
+      pool,
+      ENV,
+    );
+
+    const statuses = await pool.query<{ contract_id: string; status: string }>(
+      `SELECT contract_id, status FROM pricefloor_instances ORDER BY contract_id`,
+    );
+    const byId = new Map(statuses.rows.map((r) => [r.contract_id, r.status]));
+    expect(byId.get(PF_INSTANCE_1)).toBe("settled");
+    expect(byId.get(PF_INSTANCE_2)).toBe("cancelled");
+  });
+
+  it("is idempotent: re-processing the same Initialized event twice leaves exactly one pricefloor_events row and one pricefloor_instances row", async () => {
+    await seedRegisteredInstance(PF_INSTANCE_1);
+    const event = pricefloorInitializedEvent({
+      contractId: PF_INSTANCE_1,
+      ledger: nextLedger(),
+      txHash: PF_INSTANCE_1_INIT_TX,
+      farmer: PF_INSTANCE_1_FARMER,
+      buyer: PF_INSTANCE_1_BUYER,
+      commodity: "COCOA",
+      floorPrice: 61880000000n,
+      notional: 10000000n,
+      maturityTs: 1791626527n,
+    });
+
+    await handleEvent(event, pool, ENV);
+    await handleEvent(event, pool, ENV); // simulates getEvents redelivering the same event on a retry
+
+    const events = await pool.query(`SELECT * FROM pricefloor_events WHERE tx_hash = $1`, [PF_INSTANCE_1_INIT_TX]);
+    const instances = await pool.query(`SELECT * FROM pricefloor_instances WHERE contract_id = $1`, [PF_INSTANCE_1]);
+    expect(events.rows).toHaveLength(1);
+    expect(instances.rows).toHaveLength(1);
+  });
+
+  it("rejects an Initialized event from a contract id that was never registered and is not the legacy instance", async () => {
+    // A real, valid-checksum contract id (native XLM's Stellar Asset
+    // Contract, also used elsewhere in this project as a settlement token),
+    // but never a PriceFloor instance and never registered here -- exactly
+    // the "some other real contract emitted an event shaped like ours"
+    // case this check must still reject.
+    const unregistered = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+    await handleEvent(
+      pricefloorInitializedEvent({
+        contractId: unregistered,
+        ledger: nextLedger(),
+        txHash: "tx-unregistered-init",
+        farmer: NODE_A,
+        buyer: NODE_B,
+        commodity: "COCOA",
+        floorPrice: 100n,
+        notional: 10n,
+        maturityTs: 2000000000n,
+      }),
+      pool,
+      ENV,
+    );
+
+    const events = await pool.query(`SELECT * FROM pricefloor_events WHERE tx_hash = 'tx-unregistered-init'`);
+    const instances = await pool.query(`SELECT * FROM pricefloor_instances WHERE contract_id = $1`, [unregistered]);
+    expect(events.rows).toHaveLength(0);
+    expect(instances.rows).toHaveLength(0);
+  });
+
+  it("still indexes the fixed legacy PriceFloor instance (PRICEFLOOR_CONTRACT_ID) without it being pre-registered", async () => {
+    // The legacy instance is recognized by env.pricefloorContractId alone,
+    // matching how it already worked before Phase 4 -- it is never required
+    // to appear in pricefloor_instances first.
+    await handleEvent(
+      pricefloorInitializedEvent({
+        contractId: PRICEFLOOR_CONTRACT_ID,
+        ledger: nextLedger(),
+        txHash: "tx-legacy-init",
+        farmer: NODE_A,
+        buyer: NODE_B,
+        commodity: "COCOA",
+        floorPrice: 618800n,
+        notional: 1000n,
+        maturityTs: 2000000000n,
+      }),
+      pool,
+      ENV,
+    );
+    await handleEvent(
+      pricefloorFundedEvent({ contractId: PRICEFLOOR_CONTRACT_ID, ledger: nextLedger(), txHash: "tx-legacy-funded", buyer: NODE_B, amount: 5000n }),
+      pool,
+      ENV,
+    );
+
+    const row = await pool.query<{ status: string; farmer: string; buyer: string }>(
+      `SELECT status, farmer, buyer FROM pricefloor_instances WHERE contract_id = $1`,
+      [PRICEFLOOR_CONTRACT_ID],
+    );
+    expect(row.rows).toHaveLength(1);
+    expect(row.rows[0]?.status).toBe("funded");
+    expect(row.rows[0]?.farmer).toBe(NODE_A);
+    expect(row.rows[0]?.buyer).toBe(NODE_B);
   });
 });

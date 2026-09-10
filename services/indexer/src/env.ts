@@ -7,18 +7,24 @@ export interface IndexerEnv {
   /** Undefined until agrifeed-contract is deployed and the id is filled in. */
   oracleContractId?: string;
   /**
-   * KNOWN LIMITATION, not addressed by this step's F-06/F-07 fixes: exactly
-   * one already-deployed, already-initialized AgriPriceFloor instance.
-   * AgriPriceFloor is one-instance-per-deal (see agrifeed-contract's
-   * docs/testnet-deployment.md and apps/web/lib/stellar.ts's own
-   * pricefloorWasmHash() doc comment): every deal deployed via
-   * deploy.ts::deployInstance gets its own fresh contract id that this
-   * indexer never learns about and never watches or indexes. Nothing in
-   * this step makes multiple PriceFloor instances indexed; it only fixes
-   * how events *from this one configured instance* are decoded and
-   * disambiguated from the oracle's.
+   * A single, already-deployed, already-initialized AgriPriceFloor
+   * instance, kept as a legacy/demo fallback (see
+   * apps/web/lib/stellar.ts's own pricefloorContractId() doc comment for
+   * why the frontend keeps a matching one). Independently deployed
+   * instances are discovered and indexed through pricefloor_instances
+   * instead (see instances.ts and docs/phase4-pricefloor-deal-registry.md);
+   * this env var no longer bounds what the indexer watches, only what it
+   * watches *in addition to* every registered instance.
    */
   pricefloorContractId?: string;
+  /**
+   * The uploaded AgriPriceFloor WASM's hash, used to verify a
+   * client-submitted contract id actually is a PriceFloor deployment
+   * before registerInstance() ever persists it (see instances.ts). Without
+   * this configured, registration refuses rather than trusting an
+   * unverified claim.
+   */
+  pricefloorWasmHash?: string;
 }
 
 export function loadEnv(): IndexerEnv {
@@ -33,5 +39,6 @@ export function loadEnv(): IndexerEnv {
     rpcUrl: process.env.SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org",
     oracleContractId: process.env.ORACLE_CONTRACT_ID || undefined,
     pricefloorContractId: process.env.PRICEFLOOR_CONTRACT_ID || undefined,
+    pricefloorWasmHash: process.env.PRICEFLOOR_WASM_HASH || undefined,
   };
 }

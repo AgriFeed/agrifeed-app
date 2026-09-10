@@ -2,6 +2,7 @@ import express from "express";
 import type { Pool } from "pg";
 import { logger } from "../logger.js";
 import type { IndexerEnv } from "../env.js";
+import { registerInstance } from "../instances.js";
 
 interface CommodityRow {
   symbol: string;
@@ -20,8 +21,54 @@ interface NodeRow {
   last_submission_at: string | null;
 }
 
+interface PriceFloorInstanceRow {
+  contract_id: string;
+  status: string;
+  farmer: string | null;
+  buyer: string | null;
+  commodity: unknown | null;
+  floor_price: string | null;
+  notional: string | null;
+  settlement_token: string | null;
+  maturity_ts: string | null;
+  oracle_contract_id: string | null;
+  registered_at: string;
+  registered_at_ledger: string;
+  initialized_at: string | null;
+  funded_at: string | null;
+  settled_at: string | null;
+  cancelled_at: string | null;
+}
+
+/** Every field here has the source-of-truth documented in
+ * docs/phase4-pricefloor-deal-registry.md: settlementToken and oracle are
+ * always null (never fabricated, see that document's Q13), not omitted, so
+ * a caller can see the field exists but isn't established yet rather than
+ * inferring its absence means something else. */
+function serializePriceFloorInstance(row: PriceFloorInstanceRow) {
+  return {
+    contractId: row.contract_id,
+    status: row.status,
+    farmer: row.farmer,
+    buyer: row.buyer,
+    commodity: row.commodity,
+    floorPrice: row.floor_price,
+    notional: row.notional,
+    settlementToken: row.settlement_token,
+    maturityTs: row.maturity_ts,
+    oracleContractId: row.oracle_contract_id,
+    registeredAt: row.registered_at,
+    registeredAtLedger: Number(row.registered_at_ledger),
+    initializedAt: row.initialized_at,
+    fundedAt: row.funded_at,
+    settledAt: row.settled_at,
+    cancelledAt: row.cancelled_at,
+  };
+}
+
 export function createApp(env: IndexerEnv, pool: Pool): express.Express {
   const app = express();
+  app.use(express.json());
 
   app.get("/health", async (_req, res) => {
     res.json({
@@ -180,6 +227,65 @@ export function createApp(env: IndexerEnv, pool: Pool): express.Express {
         lastSubmissionAt: row.last_submission_at,
       })),
     });
+  });
+
+  // Phase 4: client-initiated, RPC-verified PriceFloor discovery, see
+  // docs/phase4-pricefloor-deal-registry.md. Never trusts the submitted
+  // contractId as fact; registerInstance independently confirms it over
+  // RPC before persisting anything (Q7/Q12 of that document).
+  app.post("/pricefloor-instances", async (req, res) => {
+    const contractId = req.body?.contractId;
+    if (typeof contractId !== "string" || contractId.length === 0) {
+      res.status(400).json({ error: "contractId is required" });
+      return;
+    }
+
+    const result = await registerInstance(env, pool, contractId);
+    if (result.outcome === "refused") {
+      res.status(422).json({ error: result.reason });
+      return;
+    }
+
+    const row = await pool.query<PriceFloorInstanceRow>(
+      `SELECT * FROM pricefloor_instances WHERE contract_id = $1`,
+      [contractId],
+    );
+    res.status(result.outcome === "registered" ? 201 : 200).json({
+      instance: row.rows[0] ? serializePriceFloorInstance(row.rows[0]) : null,
+    });
+  });
+
+  app.get("/pricefloor-instances", async (req, res) => {
+    const { farmer, buyer } = req.query;
+    const conditions: string[] = [];
+    const params: string[] = [];
+    if (typeof farmer === "string") {
+      params.push(farmer);
+      conditions.push(`farmer = $${params.length}`);
+    }
+    if (typeof buyer === "string") {
+      params.push(buyer);
+      conditions.push(`buyer = $${params.length}`);
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const result = await pool.query<PriceFloorInstanceRow>(
+      `SELECT * FROM pricefloor_instances ${where} ORDER BY registered_at DESC`,
+      params,
+    );
+    res.json({ instances: result.rows.map(serializePriceFloorInstance) });
+  });
+
+  app.get("/pricefloor-instances/:contractId", async (req, res) => {
+    const result = await pool.query<PriceFloorInstanceRow>(
+      `SELECT * FROM pricefloor_instances WHERE contract_id = $1`,
+      [req.params.contractId],
+    );
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: "unknown or unregistered pricefloor instance" });
+      return;
+    }
+    res.json({ instance: serializePriceFloorInstance(result.rows[0]!) });
   });
 
   app.use((req, res) => {

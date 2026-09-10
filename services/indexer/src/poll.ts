@@ -4,6 +4,14 @@ import type { Pool } from "pg";
 import { logger } from "./logger.js";
 import { asBigInt, asString, pick, toRecord } from "./native.js";
 import type { IndexerEnv } from "./env.js";
+import {
+  buildEventFilters,
+  enrichInstanceStorage,
+  isKnownPriceFloorInstance,
+  loadInstancesNeedingEnrichment,
+  loadKnownInstanceIds,
+  loadStillRegisteredIds,
+} from "./instances.js";
 
 const PRICE_HISTORY_RECORDS = 50;
 const EVENTS_PAGE_LIMIT = 100;
@@ -98,6 +106,51 @@ async function saveCursor(pool: Pool, cursor: string): Promise<void> {
 }
 
 /**
+ * The shared events cursor (loadStartLedger/saveCursor above) only ever
+ * moves forward, so it is the wrong tool for a newly *registered* instance:
+ * the common real case is registering a deal that was already deployed
+ * (and often already initialized) some time before registration, whose
+ * real events sit at an earlier ledger than wherever the shared cursor
+ * already is by the time the instance becomes known. Confirmed live during
+ * Phase 4 Step 2: two real instances, deployed/initialized ~20 minutes
+ * before being registered, were invisible to the next several ticks of the
+ * main cursor-based poll for exactly this reason, see that step's
+ * implementation report.
+ *
+ * This runs a separate, one-off getEvents call scoped to a single
+ * still-'registered' contract id, using the same FRESH_CURSOR_LOOKBACK_LEDGERS
+ * window loadStartLedger already relies on for a brand-new cursor, so it
+ * shares that same empirically-confirmed retention boundary rather than a
+ * second, independently guessed one. Never touches indexer_cursor: this is
+ * strictly additive catch-up for one contract, not a replacement for the
+ * main poll's own cursor continuity.
+ */
+async function backfillRegisteredInstance(
+  env: IndexerEnv,
+  pool: Pool,
+  server: StellarRpc.Server,
+  contractId: string,
+): Promise<void> {
+  const health = await server.getHealth();
+  const startLedger = Math.max(health.oldestLedger, health.latestLedger - FRESH_CURSOR_LOOKBACK_LEDGERS);
+
+  const response = await server.getEvents({
+    filters: [{ type: "contract", contractIds: [contractId] }],
+    startLedger,
+    limit: EVENTS_PAGE_LIMIT,
+  });
+
+  for (const event of response.events) {
+    try {
+      await handleEvent(event, pool, env);
+    } catch (err) {
+      logger.warn("failed to index backfilled event, skipping", { contractId, txHash: event.txHash, error: String(err) });
+    }
+  }
+  logger.info("backfilled registered instance", { contractId, eventsFound: response.events.length, startLedger });
+}
+
+/**
  * Reconstructs which nodes actually contributed to the finalization of
  * `symbol` at `ledger`. finalize_price (agrifeed-contract's ingest.rs) folds
  * in every pending submission for the asset and clears them atomically in
@@ -160,13 +213,15 @@ export async function backfillContributingNodes(pool: Pool): Promise<void> {
  * this repo, every handler below verifies the decoded shape before
  * writing a row, and skips (logging a warning) rather than guess.
  */
-// Watches exactly the one configured ORACLE_CONTRACT_ID and the one
-// configured PRICEFLOOR_CONTRACT_ID, not "every PriceFloor instance
-// AgriFeed has ever deployed" — see IndexerEnv.pricefloorContractId's doc
-// comment. This step's fixes correct how events from those two contracts
-// are decoded/disambiguated; they do not add multi-instance indexing.
+// Watches ORACLE_CONTRACT_ID, the fixed legacy PRICEFLOOR_CONTRACT_ID, and
+// every PriceFloor instance registered in pricefloor_instances (Phase 4,
+// see docs/phase4-pricefloor-deal-registry.md and instances.ts) -- not just
+// one configured id. The known-instance set is re-read from the database
+// on every tick, so a newly registered instance starts being polled on the
+// very next call, no restart required.
 export async function pollEvents(env: IndexerEnv, pool: Pool): Promise<void> {
-  const contractIds = [env.oracleContractId, env.pricefloorContractId].filter(
+  const knownInstanceIds = await loadKnownInstanceIds(pool);
+  const contractIds = [env.oracleContractId, env.pricefloorContractId, ...knownInstanceIds].filter(
     (id): id is string => Boolean(id),
   );
   if (contractIds.length === 0) {
@@ -176,12 +231,13 @@ export async function pollEvents(env: IndexerEnv, pool: Pool): Promise<void> {
 
   const server = new StellarRpc.Server(env.rpcUrl);
   const { startLedger, cursor } = await loadStartLedger(server, pool);
+  const filters = buildEventFilters(contractIds);
 
   const response = await server.getEvents(
     cursor
-      ? { filters: [{ type: "contract", contractIds }], cursor, limit: EVENTS_PAGE_LIMIT }
+      ? { filters, cursor, limit: EVENTS_PAGE_LIMIT }
       : {
-          filters: [{ type: "contract", contractIds }],
+          filters,
           startLedger: startLedger!,
           limit: EVENTS_PAGE_LIMIT,
         },
@@ -200,6 +256,37 @@ export async function pollEvents(env: IndexerEnv, pool: Pool): Promise<void> {
 
   await saveCursor(pool, response.cursor);
   logger.info("polled events", { count: response.events.length, cursor: response.cursor });
+
+  // Catch up any instance the main cursor-based poll above could never see
+  // (see backfillRegisteredInstance's own doc comment for why this is
+  // necessary, not merely defensive). Includes the fixed legacy instance
+  // whenever it has no pricefloor_instances row yet: it is recognized by
+  // env.pricefloorContractId alone (never goes through registerInstance),
+  // so it would otherwise never get this same catch-up, and "keep the
+  // existing fixed legacy instance queryable" requires it too.
+  const stillRegistered = await loadStillRegisteredIds(pool);
+  const legacyNeedsBackfill =
+    env.pricefloorContractId && !(await isKnownPriceFloorInstance(pool, env.pricefloorContractId, undefined));
+  const toBackfill = legacyNeedsBackfill ? [...stillRegistered, env.pricefloorContractId!] : stillRegistered;
+  for (const contractId of toBackfill) {
+    try {
+      await backfillRegisteredInstance(env, pool, server, contractId);
+    } catch (err) {
+      logger.warn("failed to backfill registered instance", { contractId, error: String(err) });
+    }
+  }
+
+  // settlement_token/oracle aren't in the Initialized event (see Q13 of
+  // docs/phase4-pricefloor-deal-registry.md), so instances that just moved
+  // past 'registered' still need a direct instance-storage read to fill
+  // them in. Deliberately after, and separate from, the event loop above:
+  // handleEvent stays RPC-free and offline-testable (see poll.test.ts),
+  // and a lookup failure here never blocks event ingestion, only leaves
+  // these two fields NULL for the next tick to retry.
+  const needsEnrichment = await loadInstancesNeedingEnrichment(pool);
+  for (const contractId of needsEnrichment) {
+    await enrichInstanceStorage(env, pool, contractId);
+  }
 }
 
 export async function handleEvent(
@@ -363,10 +450,11 @@ export async function handleEvent(
     // agrifeed-oracle's lib.rs). Matching on fnName alone would let an
     // oracle Initialized event land in pricefloor_events, whose event_type
     // CHECK constraint happens to allow 'initialized' too, so it would not
-    // even fail loudly. Disambiguate by contract identity, which
-    // getEvents' own contractIds filter already guarantees is one of these
-    // two configured ids: route by *which* contract actually emitted it,
-    // not by the event's name.
+    // even fail loudly. Disambiguate by contract identity: route by *which*
+    // contract actually emitted it, checking it against ORACLE_CONTRACT_ID
+    // versus "is this a known PriceFloor instance" (Phase 4: the fixed
+    // legacy contract, or a row already in pricefloor_instances), not by
+    // the event's name alone.
     case "initialized": {
       if (!event.contractId) return;
       const contractId = event.contractId.contractId();
@@ -378,16 +466,62 @@ export async function handleEvent(
            ON CONFLICT (tx_hash, event_type) DO NOTHING`,
           [contractId, event.ledger, event.txHash, data],
         );
-      } else if (contractId === env.pricefloorContractId) {
-        await pool.query(
-          `INSERT INTO pricefloor_events (contract_id, event_type, ledger, tx_hash, data)
-           VALUES ($1, 'initialized', $2, $3, $4)
-           ON CONFLICT (tx_hash, event_type) DO NOTHING`,
-          [contractId, event.ledger, event.txHash, data],
-        );
-      } else {
-        logger.warn("initialized event from unrecognized contract, skipping", { contractId, txHash: event.txHash });
+        return;
       }
+      if (!(await isKnownPriceFloorInstance(pool, contractId, env.pricefloorContractId))) {
+        logger.warn("initialized event from unrecognized contract, skipping", { contractId, txHash: event.txHash });
+        return;
+      }
+      await pool.query(
+        `INSERT INTO pricefloor_events (contract_id, event_type, ledger, tx_hash, data)
+         VALUES ($1, 'initialized', $2, $3, $4)
+         ON CONFLICT (tx_hash, event_type) DO NOTHING`,
+        [contractId, event.ledger, event.txHash, data],
+      );
+
+      // Only farmer/buyer/commodity/floor_price/notional/maturity_ts come
+      // from this event: settlement_token and oracle_contract_id are left
+      // untouched here (still NULL for a brand-new row) since neither is
+      // in the Initialized event at all. They are filled in separately, by
+      // enrichInstanceStorage's direct instance-storage read, called from
+      // pollEvents after this event loop, never guessed here. ON CONFLICT
+      // ... DO UPDATE both upserts a fresh row for an instance registered
+      // via the new flow (moving 'registered' -> 'initialized') and
+      // creates one for the fixed legacy instance the first time its own
+      // Initialized event is (re)observed, so it stays queryable through
+      // the same table without special-casing it.
+      const farmer = asString(topics[1]);
+      const buyer = asString(topics[2]);
+      const floorPrice = asBigInt(pick(body, "floor_price"));
+      const notional = asBigInt(pick(body, "notional"));
+      const maturityTs = asBigInt(pick(body, "maturity_ts"));
+      const commodity = pick(body, "commodity");
+      if (!farmer || !buyer || floorPrice === null || notional === null || maturityTs === null) {
+        logger.warn("unrecognized pricefloor initialized event shape, instance status not updated", {
+          contractId,
+          txHash: event.txHash,
+        });
+        return;
+      }
+      await pool.query(
+        `INSERT INTO pricefloor_instances
+           (contract_id, status, farmer, buyer, commodity, floor_price, notional, maturity_ts, registered_at_ledger, initialized_at)
+         VALUES ($1, 'initialized', $2, $3, $4, $5, $6, to_timestamp($7), $8, $9)
+         ON CONFLICT (contract_id) DO UPDATE SET
+           status = 'initialized', farmer = $2, buyer = $3, commodity = $4,
+           floor_price = $5, notional = $6, maturity_ts = to_timestamp($7), initialized_at = $9`,
+        [
+          contractId,
+          farmer,
+          buyer,
+          JSON.stringify(commodity),
+          floorPrice.toString(),
+          notional.toString(),
+          Number(maturityTs),
+          event.ledger,
+          ledgerTime.toISOString(),
+        ],
+      );
       return;
     }
 
@@ -395,17 +529,31 @@ export async function handleEvent(
     case "settled":
     case "cancelled": {
       if (!event.contractId) return;
+      const contractId = event.contractId.contractId();
       await pool.query(
         `INSERT INTO pricefloor_events (contract_id, event_type, ledger, tx_hash, data)
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (tx_hash, event_type) DO NOTHING`,
         [
-          event.contractId.contractId(),
+          contractId,
           fnName,
           event.ledger,
           event.txHash,
           JSON.stringify(value, (_key, v) => (typeof v === "bigint" ? v.toString() : v)),
         ],
+      );
+
+      // Advances pricefloor_instances' status forward from whatever
+      // Initialized already wrote. 'cancelled' is set from this event
+      // alone (see the schema comment on why: the contract writes no
+      // corresponding storage flag), never inferred any other way. If no
+      // row exists yet (Funded/Settled/Cancelled observed before this
+      // indexer ever saw Initialized for the same instance), this is a
+      // no-op rather than fabricating one from partial data.
+      const column = fnName === "funded" ? "funded_at" : fnName === "settled" ? "settled_at" : "cancelled_at";
+      await pool.query(
+        `UPDATE pricefloor_instances SET status = $2, ${column} = $3 WHERE contract_id = $1`,
+        [contractId, fnName, ledgerTime.toISOString()],
       );
       return;
     }
