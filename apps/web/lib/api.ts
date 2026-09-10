@@ -189,3 +189,54 @@ export async function getPriceFloorInstancesByBuyer(buyer: string): Promise<Pric
   const data = await get<{ instances: PriceFloorInstance[] }>(`/pricefloor-instances?buyer=${encodeURIComponent(buyer)}`);
   return data.instances;
 }
+
+/**
+ * The Phase 4 Step 5 canonical Deal API (`/api/deals*`), distinct from the
+ * `/pricefloor-instances*` family above: same underlying registry, same
+ * field shape (deliberately identical to `PriceFloorInstance`, hence the
+ * type alias rather than a re-declared duplicate), but this is the
+ * documented, stable surface Phase 4 Step 6's My Deals experience is
+ * built on. `/pricefloor-instances*` is left alone so NewDealFlow.tsx's
+ * existing registration call is unaffected by this step.
+ */
+export type Deal = PriceFloorInstance;
+
+export async function getDealsByFarmer(farmer: string): Promise<Deal[]> {
+  const data = await get<{ deals: Deal[] }>(`/api/deals?farmer=${encodeURIComponent(farmer)}`);
+  return data.deals;
+}
+
+export async function getDealsByBuyer(buyer: string): Promise<Deal[]> {
+  const data = await get<{ deals: Deal[] }>(`/api/deals?buyer=${encodeURIComponent(buyer)}`);
+  return data.deals;
+}
+
+/**
+ * A deal lookup by contract id distinguishes three different "can't show
+ * it" cases, rather than collapsing them into a single null/error: a
+ * syntactically malformed contract id (`invalid`, the API's 400) is a
+ * client input mistake, a well-formed but unregistered one (`not-found`,
+ * the API's 404) is a real, honest "no such indexed deal," and an
+ * unreachable indexer (`unavailable`) is neither of those -- see
+ * `apps/web/app/deals/[contractId]/page.tsx` for how each renders
+ * differently.
+ */
+export type DealLookupResult =
+  | { outcome: "found"; deal: Deal }
+  | { outcome: "not-found" }
+  | { outcome: "invalid" }
+  | { outcome: "unavailable"; message: string };
+
+export async function getDeal(contractId: string): Promise<DealLookupResult> {
+  try {
+    const data = await get<{ deal: Deal }>(`/api/deals/${encodeURIComponent(contractId)}`);
+    return { outcome: "found", deal: data.deal };
+  } catch (err) {
+    if (err instanceof IndexerUnavailableError) {
+      if (err.status === 404) return { outcome: "not-found" };
+      if (err.status === 400) return { outcome: "invalid" };
+      return { outcome: "unavailable", message: err.message };
+    }
+    throw err;
+  }
+}

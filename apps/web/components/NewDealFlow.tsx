@@ -19,6 +19,7 @@ import {
   type DealState,
 } from "@/lib/dealState";
 import { DealStateBadge } from "@/components/DealStateBadge";
+import { DealFieldRow } from "@/components/DealFieldRow";
 import { DealPersistenceNotice } from "@/components/DealPersistenceNotice";
 import { ParticipantAuthStatus, type ParticipantAuthState } from "@/components/ParticipantAuthStatus";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -413,12 +414,6 @@ function DealSummary({
   onEdit?: () => void;
 }) {
   const symbol = draft.commodity.values[0] ?? "";
-  const row = (label: string, children: React.ReactNode) => (
-    <div className="flex flex-col gap-0.5 border-b border-border/60 py-2 sm:flex-row sm:items-baseline sm:justify-between">
-      <span className="text-xs text-ink-muted">{label}</span>
-      <span className="text-sm text-ink-primary">{children}</span>
-    </div>
-  );
 
   return (
     <div className="card p-4">
@@ -431,14 +426,30 @@ function DealSummary({
         )}
       </div>
       <div className="mt-2">
-        {row("Farmer", <IdentifierDisplay kind="address" value={draft.farmer} />)}
-        {row("Buyer", <IdentifierDisplay kind="address" value={draft.buyer} />)}
-        {row("Commodity", <span className="font-mono">{symbol}</span>)}
-        {row("Floor price", <span className="font-mono">{formatPrice(draft.floorPrice, decimals).formatted}</span>)}
-        {row("Notional", <span className="font-mono">{formatPrice(draft.notional, decimals).formatted}</span>)}
-        {row("Maturity", <span className="font-mono">{new Date(Number(draft.maturityTs) * 1000).toUTCString()}</span>)}
-        {row("Settlement token", <IdentifierDisplay kind="contract" value={draft.settlementToken} />)}
-        {row("Oracle", <IdentifierDisplay kind="contract" value={draft.oracle} />)}
+        <DealFieldRow label="Farmer">
+          <IdentifierDisplay kind="address" value={draft.farmer} />
+        </DealFieldRow>
+        <DealFieldRow label="Buyer">
+          <IdentifierDisplay kind="address" value={draft.buyer} />
+        </DealFieldRow>
+        <DealFieldRow label="Commodity">
+          <span className="font-mono">{symbol}</span>
+        </DealFieldRow>
+        <DealFieldRow label="Floor price">
+          <span className="font-mono">{formatPrice(draft.floorPrice, decimals).formatted}</span>
+        </DealFieldRow>
+        <DealFieldRow label="Notional">
+          <span className="font-mono">{formatPrice(draft.notional, decimals).formatted}</span>
+        </DealFieldRow>
+        <DealFieldRow label="Maturity">
+          <span className="font-mono">{new Date(Number(draft.maturityTs) * 1000).toUTCString()}</span>
+        </DealFieldRow>
+        <DealFieldRow label="Settlement token">
+          <IdentifierDisplay kind="contract" value={draft.settlementToken} />
+        </DealFieldRow>
+        <DealFieldRow label="Oracle">
+          <IdentifierDisplay kind="contract" value={draft.oracle} />
+        </DealFieldRow>
       </div>
       <p className="mt-3 text-xs text-ink-muted">
         Settlement will be evaluated against this oracle&apos;s price for {symbol || "the chosen commodity"} at

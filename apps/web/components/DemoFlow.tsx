@@ -82,15 +82,36 @@ function field(label: string, children: React.ReactNode) {
 const inputClass =
   "border border-border bg-void px-3 py-2 font-mono text-sm text-ink-primary outline-none focus:border-accent";
 
-export function DemoFlow({ publicKey }: { publicKey: string }) {
-  const [step, setStep] = useState<Step>("new-deal");
-  // Starts at the legacy/demo fallback instance if one is configured, so
-  // fund/settle/cancel keep working against it exactly as before; a deal
-  // confirmed via NewDealFlow below replaces it with the freshly deployed
-  // instance for the rest of this session.
-  const [activeContractId, setActiveContractId] = useState<string | null>(pricefloorContractId() ?? null);
+/**
+ * `initialContractId`/`initialStep` (Phase 4 Step 6) let the deal recovery
+ * page (`/deals/:contractId`) deep-link a known, already-registered
+ * contract id straight into Fund/Settle/Cancel via `/demo?contractId=...`,
+ * skipping the "type it in" step -- never a new signing capability, only
+ * a shortcut to the exact same same-session Fund/Settle/Cancel forms
+ * below that already work for any contract id, recovered or not. Omitted,
+ * behavior is exactly what it was before this step.
+ */
+export function DemoFlow({
+  publicKey,
+  initialContractId,
+  initialStep,
+}: {
+  publicKey: string;
+  initialContractId?: string;
+  initialStep?: Step;
+}) {
+  const [step, setStep] = useState<Step>(initialStep ?? "new-deal");
+  // Starts at a deep-linked recovered instance if one was given, else the
+  // legacy/demo fallback instance if one is configured, so fund/settle/
+  // cancel keep working against it exactly as before; a deal confirmed
+  // via NewDealFlow below replaces it with the freshly deployed instance
+  // for the rest of this session.
+  const [activeContractId, setActiveContractId] = useState<string | null>(
+    initialContractId ?? pricefloorContractId() ?? null,
+  );
   const [funded, setFunded] = useState(false);
   const isLegacyInstance = activeContractId !== null && activeContractId === pricefloorContractId();
+  const isRecoveredInstance = !isLegacyInstance && initialContractId !== undefined && activeContractId === initialContractId;
 
   const config = activeContractId
     ? { contractId: activeContractId, rpcUrl: rpcUrl(), networkPassphrase: networkPassphrase() }
@@ -122,6 +143,8 @@ export function DemoFlow({ publicKey }: { publicKey: string }) {
           <IdentifierDisplay kind="contract" value={activeContractId} />
           {isLegacyInstance ? (
             <StatusBadge tone="neutral">legacy configured instance, not a deal you created</StatusBadge>
+          ) : isRecoveredInstance ? (
+            <StatusBadge tone="info">recovered from My Deals — indexed record, not this session&apos;s memory</StatusBadge>
           ) : (
             <StatusBadge tone="info">deal instance created this session</StatusBadge>
           )}

@@ -7,6 +7,7 @@ const SECTIONS = [
   { href: "#contract-reference", label: "Contract reference" },
   { href: "#integration-guide", label: "Integration guide" },
   { href: "#wallet-signing", label: "Wallet & signing" },
+  { href: "#my-deals", label: "My Deals & recovery" },
   { href: "#testing", label: "Testing" },
   { href: "#testnet-deployment", label: "Testnet deployment" },
   { href: "#architecture", label: "Architecture" },

@@ -1,8 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { WalletConnect } from "@/components/WalletConnect";
 import { DemoFlow } from "@/components/DemoFlow";
+
+/**
+ * Wrapped in Suspense (Phase 4 Step 6) because it reads `useSearchParams()`
+ * -- Next.js requires that for any component using it in the app router,
+ * even one that (like this whole page) is already entirely client-
+ * rendered. `?contractId=&step=` are the deal recovery page's deep link
+ * into an existing same-session Fund/Settle/Cancel flow, see DemoFlow.tsx.
+ */
+function DemoFlowWithDeepLink({ publicKey }: { publicKey: string }) {
+  const searchParams = useSearchParams();
+  const contractId = searchParams.get("contractId") ?? undefined;
+  const stepParam = searchParams.get("step");
+  const step = stepParam === "fund" || stepParam === "settle-cancel" || stepParam === "new-deal" ? stepParam : undefined;
+  return <DemoFlow publicKey={publicKey} initialContractId={contractId} initialStep={step} />;
+}
 
 export default function PriceProtectionPage() {
   const [publicKey, setPublicKey] = useState<string | null>(null);
@@ -35,7 +51,9 @@ export default function PriceProtectionPage() {
 
       {publicKey && (
         <div className="mt-8">
-          <DemoFlow publicKey={publicKey} />
+          <Suspense fallback={<DemoFlow publicKey={publicKey} />}>
+            <DemoFlowWithDeepLink publicKey={publicKey} />
+          </Suspense>
         </div>
       )}
     </main>

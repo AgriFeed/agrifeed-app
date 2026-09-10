@@ -564,6 +564,64 @@ commodityUnit(symbol: string): string`}</CodeBlock>
             </p>
           </DocsSection>
 
+          <DocsSection id="my-deals" title="My Deals &amp; recovery">
+            <p>
+              <a href="/deals" className="text-accent hover:underline">My Deals</a> discovers a
+              connected address&apos;s deals exclusively from <code>GET /api/deals?farmer=</code>{" "}
+              / <code>?buyer=</code> (see <a href="#rest-api" className="text-accent">REST API</a>),
+              never from this browser&apos;s own storage. The browser is not, and has never been,
+              the source of truth for whether a deal exists — only for whether a signing session
+              is currently in progress in this specific tab.
+            </p>
+            <p>
+              <code>contractId</code> is the deal&apos;s canonical identity, exactly as the
+              indexer&apos;s own schema states: nothing else names a deal, and{" "}
+              <code>GET /api/deals/:contractId</code> (
+              <a href="/deals" className="text-accent hover:underline">My Deals</a>{" "}
+              links each deal to <code>/deals/:contractId</code>) is a Server Component with no
+              client state of its own — every load is a fresh read from the indexer, by contract
+              id alone.
+            </p>
+            <DocsTable
+              headers={["What survives a refresh / new browser / another day", "What does not"]}
+              rows={[
+                [
+                  "The persisted deal record itself: contractId, indexed status, terms once observed (farmer, buyer, commodity, floor price, notional, maturity), and lifecycle timestamps — all read fresh from /api/deals every time.",
+                  "The in-progress signing session: draft terms not yet submitted, and any authorization entries collected so far. This has never been persisted anywhere (see Wallet & signing above) and closing or reloading the tab loses it permanently — recovering the deal record afterward does not resurrect that session.",
+                ],
+              ]}
+            />
+            <p>
+              Practically: if a deal was deployed and registered but the tab closed before{" "}
+              <code>initialize</code> was submitted, My Deals will show it as <code>status:
+              &quot;registered&quot;</code> — a real, honest fact — but there is no way to resume
+              signing the same draft; a fresh two-party session against the same contract id (or a
+              new one) is the only path forward. Once <code>initialize</code> has succeeded, the
+              deal&apos;s terms and every later transition (fund/settle/cancel) are indexed and
+              recoverable independent of any browser session, and the deal detail page deep-links
+              back into Price Protection&apos;s existing same-session Fund/Settle/Cancel forms via{" "}
+              <code>/demo?contractId=&amp;step=</code> — a shortcut into the same forms any visitor
+              already has, not a new signing capability.
+            </p>
+            <p>
+              <StatusBadge tone="warning">cancellation stays event-only</StatusBadge> My Deals
+              never infers <code>cancelled</code> from missing funding or missing settlement, and
+              never will: the underlying registry only ever sets that status from a real, observed{" "}
+              <code>Cancelled</code> event (see{" "}
+              <a href="#contract-reference" className="text-accent">Contract reference</a> for why
+              the contract itself keeps no corresponding storage flag). Live cancellation remains
+              unverified end to end in this environment — see{" "}
+              <a href="#testing" className="text-accent">Testing</a>.
+            </p>
+            <p>
+              <StatusBadge tone="neutral">current limitation</StatusBadge> Same-session signing is
+              unchanged by this feature — see{" "}
+              <a href="#wallet-signing" className="text-accent">Wallet &amp; signing</a>. My Deals
+              makes a previously-created deal&apos;s indexed record easy to find again; it does not
+              add multi-device or multi-session signing.
+            </p>
+          </DocsSection>
+
           <DocsSection id="testing" title="Testing">
             <p>Application workspace (root of this repo):</p>
             <CodeBlock label="agrifeed-app">{`pnpm typecheck
@@ -587,9 +645,13 @@ cargo clippy --workspace --all-targets -- -D warnings`}</CodeBlock>
               <StatusBadge tone="neutral">scope</StatusBadge> None of the above is a live,
               automated end-to-end test against real Testnet infrastructure or a real wallet
               extension. Live browser/Freighter verification in this project has so far been
-              done manually; settlement and cancellation specifically have real SDK support and
-              passing unit tests, but have not been exercised against a live, matured agreement
-              in this environment.
+              done manually. <code>settle()</code> has been exercised end to end against a real,
+              matured agreement, with the indexer&apos;s ingestion independently confirmed
+              (Phase 4 Step 4); <code>cancel()</code> has real SDK support and passing unit tests
+              but has not been exercised live — its grace periods are real 48-96 hour waits on
+              Testnet with no way to fast-forward them, see{" "}
+              <a href="#my-deals" className="text-accent">My Deals &amp; recovery</a> for how that
+              constrains what this indexer can ever claim about a cancelled deal.
             </p>
           </DocsSection>
 

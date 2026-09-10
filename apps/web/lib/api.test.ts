@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   getCommodityHistory,
+  getDeal,
+  getDealsByBuyer,
+  getDealsByFarmer,
   getPriceFloorInstance,
   getPriceFloorInstancesByBuyer,
   getPriceFloorInstancesByFarmer,
@@ -173,5 +176,111 @@ describe("getPriceFloorInstance / getPriceFloorInstancesByFarmer / getPriceFloor
     await getPriceFloorInstancesByBuyer(buyer);
     expect(String(fetchMock.mock.calls[1]![0])).toContain(`buyer=${buyer}`);
     expect(String(fetchMock.mock.calls[1]![0])).not.toContain("farmer=");
+  });
+});
+
+/**
+ * Phase 4 Step 6: the client side of the canonical /api/deals surface
+ * (Step 5), used by My Deals. Deliberately hits /api/deals, not
+ * /pricefloor-instances, and asserts the real query-string shape rather
+ * than assuming it.
+ */
+describe("getDealsByFarmer / getDealsByBuyer", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("calls /api/deals?farmer=, not /pricefloor-instances", async () => {
+    const farmer = "GCPM65RUTWWMHM2VBCJDLI2CBA3JDPPMG7QGABAW7DYJLLC6NAIIFR62";
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ deals: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getDealsByFarmer(farmer);
+    const url = String(fetchMock.mock.calls[0]![0]);
+    expect(url).toContain("/api/deals");
+    expect(url).toContain(`farmer=${farmer}`);
+    expect(url).not.toContain("/pricefloor-instances");
+  });
+
+  it("calls /api/deals?buyer=, isolated from farmer", async () => {
+    const buyer = "GABZIONIHNKUA2YLWDWESPJC7R23UQJ2GPM6CM4RSZJQ7VZ73WQ25AES";
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ deals: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getDealsByBuyer(buyer);
+    const url = String(fetchMock.mock.calls[0]![0]);
+    expect(url).toContain(`buyer=${buyer}`);
+    expect(url).not.toContain("farmer=");
+  });
+
+  it("returns real settled and cancelled deals exactly as the API supplied them, never re-deriving status", async () => {
+    const settled = { contractId: "C1", status: "settled", settledAt: "2026-09-10T12:23:42.000Z" };
+    const cancelled = { contractId: "C2", status: "cancelled", cancelledAt: "2026-09-05T00:00:00.000Z" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ deals: [settled, cancelled] }), { status: 200 })),
+    );
+
+    const deals = await getDealsByFarmer("GCPM65RUTWWMHM2VBCJDLI2CBA3JDPPMG7QGABAW7DYJLLC6NAIIFR62");
+    expect(deals).toEqual([settled, cancelled]);
+  });
+
+  it("propagates a real API failure rather than returning an empty portfolio", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("fetch failed");
+      }),
+    );
+
+    await expect(getDealsByFarmer("GCPM65RUTWWMHM2VBCJDLI2CBA3JDPPMG7QGABAW7DYJLLC6NAIIFR62")).rejects.toBeInstanceOf(
+      IndexerUnavailableError,
+    );
+  });
+});
+
+describe("getDeal", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns { outcome: 'found' } with the real deal for a registered contract id", async () => {
+    const deal = { contractId: "CD2AX7NTIDGLWBYOY4Y4EYFLPTNCPACXDDCO3XSN7BAEB74UWVE7JCQN", status: "funded" };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ deal }), { status: 200 })));
+
+    const result = await getDeal("CD2AX7NTIDGLWBYOY4Y4EYFLPTNCPACXDDCO3XSN7BAEB74UWVE7JCQN");
+    expect(result).toEqual({ outcome: "found", deal });
+  });
+
+  it("returns { outcome: 'not-found' } for the API's 404, never a fabricated deal", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "unknown or unregistered deal" }), { status: 404 })),
+    );
+
+    const result = await getDeal("CBKAREHZ2ZXQW5RKPVERNL52AER2G45XVXQ7PPGLQL7FXJZ6VXRNTM2T");
+    expect(result).toEqual({ outcome: "not-found" });
+  });
+
+  it("returns { outcome: 'invalid' } for the API's 400, distinct from not-found", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "not a syntactically valid Soroban contract id" }), { status: 400 })),
+    );
+
+    const result = await getDeal("not-a-real-contract-id");
+    expect(result).toEqual({ outcome: "invalid" });
+  });
+
+  it("returns { outcome: 'unavailable' } when the indexer cannot be reached at all", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("fetch failed");
+      }),
+    );
+
+    const result = await getDeal("CD2AX7NTIDGLWBYOY4Y4EYFLPTNCPACXDDCO3XSN7BAEB74UWVE7JCQN");
+    expect(result.outcome).toBe("unavailable");
   });
 });
