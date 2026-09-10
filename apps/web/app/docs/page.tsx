@@ -123,8 +123,15 @@ settle()  or  cancel(caller)      after maturity`}</CodeBlock>
               <StatusBadge tone="neutral">current limitation</StatusBadge> Two-party
               authorization in this product is <strong>same-session</strong>: both parties sign
               in the same browser tab, switching which Freighter account is active between
-              signatures. There is no link-sharing or multi-device handoff yet, a deal in
-              progress that isn&apos;t finished before the tab closes is lost.
+              signatures. There is no link-sharing or multi-device handoff yet: a signing
+              session in progress (draft terms, whichever signatures have been collected so far)
+              that isn&apos;t finished before the tab closes is lost for good, with no way to
+              recover it. That is a different fact from whether the deal itself survives,
+              though: once a deployed instance has been registered for discovery, the contract
+              id itself remains discoverable and recoverable afterward, from any browser, via{" "}
+              <a href="#my-deals" className="text-accent">My Deals &amp; recovery</a>. Only the
+              in-progress signing session is unrecoverable, never the persisted record of an
+              already-registered deal.
             </p>
             <p>
               After initialization, the buyer funds the agreement (a separate, later
@@ -352,10 +359,14 @@ pricefloor.cancel(config, callerPublicKey, signAndSend): Promise<void>`}</CodeBl
               </p>
               <p>
                 <code>getState</code> is exported but currently returns <code>{"{}"}</code>{" "}
-                unconditionally: AgriPriceFloor exposes no state-reading contract function, and
-                arbitrary instances are not indexed (see{" "}
-                <a href="#rest-api" className="text-accent">REST API</a>), so there is no live
-                source for it to read from yet.
+                unconditionally: AgriPriceFloor exposes no state-reading contract function for
+                this SDK function to call, and it does not itself read from the indexer. That is
+                a gap in this one stub function, not in indexing coverage generally: a{" "}
+                <strong>registered</strong> instance&apos;s state is indexed and available today
+                via <code>GET /api/deals/:contractId</code> (see{" "}
+                <a href="#rest-api" className="text-accent">REST API</a> and{" "}
+                <a href="#my-deals" className="text-accent">My Deals &amp; recovery</a>);
+                <code>getState</code> simply does not call it.
               </p>
             </DocsSubsection>
 
@@ -474,7 +485,7 @@ commodityUnit(symbol: string): string`}</CodeBlock>
           </DocsSection>
 
           <DocsSection id="integration-guide" title="Integration guide">
-            <p>Six practical workflows, each labeled by where it runs.</p>
+            <p>Seven practical workflows, each labeled by where it runs.</p>
 
             <DocsSubsection title="A. Read a commodity price (SDK/direct or REST, Testnet)">
               <p>Either call the oracle directly with the SDK, or read the indexed value over REST, see <a href="#sdk" className="text-accent">SDK</a> and <a href="#rest-api" className="text-accent">REST API</a> above.</p>
@@ -528,6 +539,18 @@ commodityUnit(symbol: string): string`}</CodeBlock>
               requested from Freighter, the application never handles a secret key directly.
               See <a href="#wallet-signing" className="text-accent">Wallet &amp; signing</a>.
             </p>
+
+            <DocsSubsection title="G. Discover and recover a registered deal (REST, Testnet)">
+              <p>
+                <code>GET /api/deals?farmer=</code> or <code>?buyer=</code> returns every deal
+                registered under an address, farmer or buyer; <code>GET
+                /api/deals/:contractId</code> returns one by its canonical identity. Neither
+                depends on any client-local state: a fresh browser session, a page reload, or a
+                different device querying the same address all see the same real, indexed
+                result. See <a href="#my-deals" className="text-accent">My Deals &amp; recovery</a>{" "}
+                for exactly what this can and cannot recover.
+              </p>
+            </DocsSubsection>
           </DocsSection>
 
           <DocsSection id="wallet-signing" title="Wallet &amp; signing">
@@ -553,14 +576,23 @@ commodityUnit(symbol: string): string`}</CodeBlock>
               buyer to sign later on another.
             </p>
             <p>
-              <StatusBadge tone="neutral">environment note</StatusBadge> Live testing in this
-              environment found that the installed Freighter browser extension could not parse
-              the specific Soroban authorization entry shape (<code>SOROBAN_CREDENTIALS_ADDRESS_V2</code>)
+              <StatusBadge tone="neutral">environment note</StatusBadge> Live testing in an
+              earlier environment found that the installed Freighter browser extension could not
+              parse the specific Soroban authorization entry shape (<code>SOROBAN_CREDENTIALS_ADDRESS_V2</code>)
               this Testnet deployment currently returns from simulation, even on Freighter&apos;s
               latest available release at the time of testing. This is an external wallet
-              compatibility limitation observed in this environment, not a claim about Soroban
+              compatibility limitation observed in that environment, not a claim about Soroban
               protocol behavior in general or about AgriFeed&apos;s own authorization logic,
               which builds and signs a standards-compliant entry either way.
+            </p>
+            <p>
+              <StatusBadge tone="warning">unverified</StatusBadge> A later re-verification
+              attempt (Phase 5 Step 3) found no Freighter extension installed at all in that
+              session&apos;s browser, so the finding above could be neither reconfirmed nor
+              refuted at that time. Freighter compatibility for this flow is therefore
+              accurately described as <strong>unverified</strong>, not as proven working and not
+              as confirmed broken, pending a real re-test against a currently-installed Freighter
+              release.
             </p>
           </DocsSection>
 
@@ -683,8 +715,12 @@ cargo clippy --workspace --all-targets -- -D warnings`}</CodeBlock>
             <p>
               The legacy PriceFloor instance above is a single already-initialized deal kept
               for continuing to fund/settle/cancel one existing agreement; it is never used to
-              create a new deal, and it is the only PriceFloor instance the indexer currently
-              watches.
+              create a new deal. It is not the only instance the indexer watches: any instance
+              registered via <code>POST /pricefloor-instances</code> is watched too, alongside
+              it, and readable afterward through the canonical{" "}
+              <code>GET /api/deals*</code> surface, see{" "}
+              <a href="#architecture" className="text-accent">Architecture</a> and{" "}
+              <a href="#rest-api" className="text-accent">REST API</a>.
             </p>
             <p>
               Environment variables a consuming frontend or service needs (see{" "}
@@ -723,8 +759,10 @@ Indexer (services/indexer)                 polls the oracle, writes Postgres, se
 REST API                                   /commodities, /commodities/:symbol/history, /nodes
     ↓
 Next.js app (apps/web)                     Markets, Commodity Detail, Reporting Network`}</CodeBlock>
-            <p>PriceFloor path, one deal:</p>
+            <p>PriceFloor write path, one deal:</p>
             <CodeBlock>{`deploy.deployInstance          new, uninitialized instance
+    ↓
+POST /pricefloor-instances      registers the contract id for discovery
     ↓
 multiparty auth                 farmer + buyer independently authorize
     ↓
@@ -733,14 +771,29 @@ initialize                       on-chain, both signatures present
 fund                             buyer deposits collateral
     ↓
 settle  or  cancel                after maturity`}</CodeBlock>
+            <p>PriceFloor read path, discovery and recovery:</p>
+            <CodeBlock>{`pricefloor_instances registry (Postgres)   one row per registered instance, status
+                                             advanced only by observed on-chain events
+    ↓
+Indexer (services/indexer)                  same poll loop as the Oracle side, watches
+                                             every registered instance, not just one
+    ↓
+GET /api/deals, /api/deals/:contractId      the canonical REST surface, see REST API
+    ↓
+Next.js app (apps/web)                      My Deals, deal detail/recovery`}</CodeBlock>
             <p>
-              <StatusBadge tone="neutral">current gap</StatusBadge> The indexer only watches the
-              Oracle and one fixed, legacy PriceFloor instance. A PriceFloor instance deployed
-              through the product&apos;s own deploy-and-initialize flow is real and on-chain,
-              but is not picked up by the indexer, and therefore has no REST endpoint and no
-              history view on this site. Reading a freshly deployed instance&apos;s state
-              today means calling it directly over Soroban RPC. Multi-instance PriceFloor
-              indexing is not implemented.
+              Every independently deployed instance that has been registered is indexed here,
+              not only a single fixed legacy one: multi-instance PriceFloor indexing is
+              implemented and real, with independently re-verified isolation between instances
+              (see the Phase 4 Step 7 audit, linked from{" "}
+              <a href="#my-deals" className="text-accent">My Deals &amp; recovery</a>). An
+              instance that has never been registered still has no REST endpoint and no history
+              view on this site; reading its state means calling it directly over Soroban RPC.
+              What remains genuinely open is narrower: live end-to-end verification of{" "}
+              <code>cancel()</code> and of the browser/Freighter signing path specifically, both
+              covered in{" "}
+              <a href="#wallet-signing" className="text-accent">Wallet &amp; signing</a> and{" "}
+              <a href="#testing" className="text-accent">Testing</a>.
             </p>
           </DocsSection>
 

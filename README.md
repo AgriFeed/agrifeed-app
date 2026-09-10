@@ -58,6 +58,11 @@ Until `NEXT_PUBLIC_ORACLE_CONTRACT_ID` and the other contract-id
 env vars are filled in with a real `agrifeed-contract` testnet
 deployment, every page in `apps/web` shows an honest "source unavailable"
 state rather than placeholder data, this is intentional, see `DESIGN.md`.
+`NEXT_PUBLIC_PRICEFLOOR_WASM_HASH`/`PRICEFLOOR_WASM_HASH` specifically are
+what the Price Protection deploy flow and its indexer-side registration
+need; without them, deploying a new deal and discovering it afterward on
+`/deals` won't work even if the oracle side is fully configured. See
+`.env.example` for the full list.
 
 ## Routes
 
@@ -67,7 +72,9 @@ state rather than placeholder data, this is intentional, see `DESIGN.md`.
 | `/commodity/[symbol]` | Price history, finalizations, and every contributing node |
 | `/nodes` | The authorized node set and their real submission activity |
 | `/demo` | Connect Freighter and walk through a real `AgriPriceFloor` contract |
-| `/docs` | Integration guide for developers consuming the oracle |
+| `/deals` | My Deals: every registered PriceFloor deal for the connected address, discovered via `/api/deals`, never from browser storage |
+| `/deals/[contractId]` | Deal detail and recovery by contract id, independent of any browser session |
+| `/docs` | Integration guide for developers consuming the oracle and the PriceFloor deal registry |
 
 ## Contributing
 

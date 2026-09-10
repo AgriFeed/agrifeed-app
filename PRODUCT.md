@@ -37,9 +37,15 @@ Stellar, plus one real financial primitive built on top of it.
 ## Who this is for
 
 - **Farmers and buyers** who want a floor-price agreement without a
-  brokerage relationship, demonstrated end to end on `/demo`.
+  brokerage relationship, demonstrated end to end on `/demo`. Every
+  registered deal stays discoverable afterward, by address, on `/deals`,
+  independent of the browser tab it was created in, though the two-party
+  signing session itself is never recoverable if it's interrupted before
+  the agreement is initialized on-chain, see `/docs#my-deals`.
 - **Developers** who want a commodity price feed they can call from their
-  own Soroban contract, or over REST, documented on `/docs`.
+  own Soroban contract, or over REST, documented on `/docs`, including
+  the persistent PriceFloor deal registry (`/api/deals`) alongside the
+  oracle's own read API.
 - **Reviewers and node operators** deciding whether to trust or run this
   feed, who can check the actual node set and submission history on
   `/nodes` and `/commodity/[symbol]`, not just take a claim of

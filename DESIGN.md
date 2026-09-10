@@ -72,13 +72,31 @@ instead of reinventing the treatment per page:
   every pending/confirmed/failed/error/warning/info state in the app
   should render through this rather than a bespoke badge.
 - `NetworkBadge` — the permanent, always-visible Testnet indicator.
-- `DealStateBadge` / `FundedBadge` — the Price Protection lifecycle
-  vocabulary, mirroring `dealState.ts`'s real `DealStatus` union exactly.
-  "Signed" and "confirmed" are always two different badges, never one.
+- `DealStateBadge` / `FundedBadge` — the Price Protection **browser
+  signing session** lifecycle vocabulary, mirroring `dealState.ts`'s real
+  `DealStatus` union exactly. "Signed" and "confirmed" are always two
+  different badges, never one.
+- `IndexedDealStatusBadge` (Phase 4) — the separate, indexed **registry**
+  lifecycle vocabulary (registered/initialized/funded/settled/cancelled),
+  deliberately never the same component as `DealStateBadge`: one reflects
+  this browser tab's in-progress signing state, the other reflects what
+  the indexer has actually observed on-chain, which may have happened in
+  a different session entirely.
 - `ParticipantAuthStatus` — one participant's (farmer's or buyer's)
   expected-vs-connected wallet comparison and signing state.
-- `DealPersistenceNotice` — the mandatory, non-dismissible reminder that a
-  deal in progress exists only in the current browser tab.
+- `DealPersistenceNotice` — the mandatory, non-dismissible reminder that
+  this browser tab's signing progress is never saved anywhere; distinct
+  from whether the deal itself is recoverable (see `DealDetailView`
+  below) once it exists on-chain.
+- `DealFieldRow` (Phase 4) — the shared label/value row for one deal term,
+  used identically by the pre-signing deal summary and by My Deals'
+  deal cards and detail view, so a term never renders two visually
+  different ways depending on which screen shows it.
+- `DealCard` (Phase 4) — one deal in My Deals' list; the card's title is
+  a real link (keyboard-accessible), not a click handler on a `<div>`.
+- `DealDetailView` (Phase 4) — the full deal detail/recovery view,
+  including status-specific recovery guidance that never claims a
+  browser signing session can be resumed.
 - `EmptyState` / `StaleBanner` / `SourceUnavailable` — the three
   non-error-but-not-fully-fresh states, kept visually distinct from each
   other and from a hard error.
