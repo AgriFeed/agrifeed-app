@@ -10,7 +10,7 @@ import {
 import { OracleError } from "./types.js";
 import type { AgriPriceFloorConfig, PendingAuthEntry, PreparedMultiPartyInvocation } from "./types.js";
 import type { SignAndSend } from "./wallet.js";
-import { submitAndConfirm } from "./soroban-tx.js";
+import { refreshTimeBounds, submitAndConfirm } from "./soroban-tx.js";
 
 /**
  * Real multi-party Soroban authorization, for calls like AgriPriceFloor's
@@ -243,7 +243,17 @@ export async function submitMultiPartyInvocation(
   }
 
   const builder = StellarRpc.assembleTransaction(primedTx, simulated);
-  const built = withAuthEntries(builder, primedTx, authEntries);
+  // `primedTx` (and so `builder`, cloned from it) still carries whatever
+  // time bounds `prepareMultiPartyInvocation` fixed, possibly minutes or
+  // more ago -- the exact staleness this whole function's own doc comment
+  // above already describes handling for nonces, but time bounds are a
+  // separate mechanism (envelope-level, not per-auth-entry) that was not
+  // previously refreshed here. This is safe to do this late, right before
+  // the source account's own fresh envelope signature is requested below,
+  // and never touches the already-signed entries in `authEntries`: see
+  // refreshTimeBounds's doc comment for why the two are independent
+  // (Phase 5 Step 4).
+  const built = refreshTimeBounds(withAuthEntries(builder, primedTx, authEntries));
 
   const signedXdr = await signAndSend(built.toXDR());
   const signedTx = TransactionBuilder.fromXDR(signedXdr, config.networkPassphrase);

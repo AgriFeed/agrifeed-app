@@ -2,7 +2,7 @@ import { Contract, nativeToScVal, rpc as StellarRpc, TransactionBuilder, xdr } f
 import { OracleError } from "./types.js";
 import type { AgriPriceFloorConfig, AgriPriceFloorState, Asset } from "./types.js";
 import type { SignAndSend } from "./wallet.js";
-import { submitAndConfirm } from "./soroban-tx.js";
+import { refreshTimeBounds, submitAndConfirm } from "./soroban-tx.js";
 
 // Mirrors contracts/agripricefloor/src/errors.rs; keep in sync with that enum.
 const CONTRACT_ERROR_MESSAGES: Record<number, string> = {
@@ -59,7 +59,13 @@ async function invokeAndConfirm(
       .build();
 
     const prepared = await server.prepareTransaction(built);
-    const signedXdr = await signAndSend(prepared.toXDR());
+    // Freshen the signing window right before handing it to the wallet,
+    // see refreshTimeBounds's doc comment (Phase 5 Step 4) for why the
+    // `.setTimeout(60)` above, fixed before this RPC round trip and
+    // before the human ever sees the prompt, is not what actually
+    // bounds their approval time.
+    const readyToSign = refreshTimeBounds(prepared);
+    const signedXdr = await signAndSend(readyToSign.toXDR());
     const signedTx = TransactionBuilder.fromXDR(signedXdr, config.networkPassphrase);
 
     return await submitAndConfirm(server, signedTx, method);

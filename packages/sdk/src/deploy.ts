@@ -2,7 +2,7 @@ import { Address, Operation, rpc as StellarRpc, scValToNative, TransactionBuilde
 import { OracleError } from "./types.js";
 import type { AgriPriceFloorDeploymentConfig } from "./types.js";
 import type { SignAndSend } from "./wallet.js";
-import { submitAndConfirm } from "./soroban-tx.js";
+import { refreshTimeBounds, submitAndConfirm } from "./soroban-tx.js";
 
 /**
  * AgriPriceFloor is one-instance-per-deal (see agrifeed-contract's
@@ -53,7 +53,12 @@ export async function deployInstance(
     .build();
 
   const prepared = await server.prepareTransaction(built);
-  const signedXdr = await signAndSend(prepared.toXDR());
+  // Freshen the signing window right before handing it to the wallet,
+  // not the one `.setTimeout(60)` above already fixed before this RPC
+  // round trip and before the human even sees the prompt -- see
+  // refreshTimeBounds's own doc comment (Phase 5 Step 4).
+  const readyToSign = refreshTimeBounds(prepared);
+  const signedXdr = await signAndSend(readyToSign.toXDR());
   const signedTx = TransactionBuilder.fromXDR(signedXdr, config.networkPassphrase);
 
   const returnValue = await submitAndConfirm(server, signedTx, "deployInstance");

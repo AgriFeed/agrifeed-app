@@ -47,6 +47,30 @@ export class OracleError extends Error {
 }
 
 /**
+ * Thrown when a real Stellar Core `TransactionResult` specifically
+ * rejects submission with `txTooLate`: the envelope's own time bounds
+ * (`maxTime`, part of what gets signed, so fixed before the wallet could
+ * be asked to approve) had already elapsed by the time it reached the
+ * network. Distinct from every other submission failure (see
+ * `isTxTooLate`/`submitAndConfirm` in `soroban-tx.ts`) so a caller can
+ * tell "nothing was submitted, a fresh transaction and signature are
+ * needed" apart from a real on-chain rejection or an unrelated RPC error,
+ * never a generic status message (Phase 5 Step 4, following three real,
+ * repeated `tx_too_late` failures observed live during Phase 4 Step 4).
+ */
+export class TxTooLateError extends OracleError {
+  constructor(method: string) {
+    super(
+      `${method}: this transaction's signing window expired before it reached the network ` +
+        "(most likely because approving it in the wallet took longer than the window allowed). " +
+        "Nothing was submitted, no funds moved and no state changed. Try again: a fresh transaction " +
+        "will be prepared and will need a fresh signature.",
+    );
+    this.name = "TxTooLateError";
+  }
+}
+
+/**
  * Thrown by node-relayer source adapters when an upstream data source
  * cannot be reached or returns a shape we don't recognize. Callers must
  * treat this as "no data", never substitute a fabricated or stale price.
