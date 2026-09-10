@@ -214,21 +214,89 @@ settle()  or  cancel(caller)      after maturity`}</CodeBlock>
 }`}</CodeBlock>
             </DocsSubsection>
 
+            <DocsSubsection title="GET /api/deals">
+              <p>
+                The canonical, stable read API for indexed PriceFloor deals (Phase 4 Step 5).
+                Every independently deployed instance that has been{" "}
+                <a href="#pricefloor" className="text-accent">registered</a> is indexed here,
+                not only the one fixed legacy instance, and <code>contractId</code> is the
+                deal&apos;s canonical identity, nothing else names it.
+              </p>
+              <CodeBlock label="response">{`{
+  "deals": [
+    {
+      "contractId": "CD2A...",
+      "status": "funded",
+      "farmer": "GABC...",
+      "buyer": "GDEF...",
+      "commodity": ["Other", "COCOA"],
+      "floorPrice": "40820949368",
+      "notional": "100",
+      "settlementToken": "CDLZ...",
+      "maturityTs": "2026-09-10T12:23:24.000Z",
+      "oracleContractId": "CBKA...",
+      "registeredAt": "2026-09-10T12:18:08.117Z",
+      "registeredAtLedger": 4603820,
+      "initializedAt": "2026-09-10T12:18:37.000Z",
+      "fundedAt": "2026-09-10T12:18:52.000Z",
+      "settledAt": null,
+      "cancelledAt": null
+    }
+  ],
+  "limit": 50,
+  "offset": 0
+}`}</CodeBlock>
+              <p>
+                <code>GET /api/deals/:contractId</code> returns <code>{"{ \"deal\": {...} }"}</code>{" "}
+                with the same shape for one deal, <code>404 {"{ \"error\": \"...\" }"}</code> for a
+                syntactically valid but unregistered contract id, or <code>400</code> for one
+                that isn&apos;t even shaped like a real Soroban contract id. Add{" "}
+                <code>?farmer=G...</code> and/or <code>?buyer=G...</code> to <code>GET
+                /api/deals</code> to filter (given together, both must match the same deal, an
+                AND, not an OR); a malformed address returns <code>400</code>, never a silent
+                empty result. <code>?limit=</code> (default 50, clamped to a 200 ceiling rather
+                than rejected) and <code>?offset=</code> page the list, ordered most-recently-
+                registered first; there is no total count in the response, a page shorter than
+                <code>limit</code> is the only signal that no further page exists.
+              </p>
+              <DocsTable
+                headers={["field", "source of truth"]}
+                rows={[
+                  ["status", "Indexed lifecycle state, advanced only by an observed on-chain event, never re-derived from a storage snapshot"],
+                  ["farmer / buyer / commodity / floorPrice / notional / maturityTs", "The Initialized event's own payload; null until observed"],
+                  ["settlementToken / oracleContractId", "Not in any PriceFloor event; read separately from the contract's own instance storage, null until that read succeeds"],
+                  ["registeredAt / registeredAtLedger", "When this indexer verified and persisted the row (RPC read), not an on-chain event"],
+                  ["initializedAt / fundedAt / settledAt / cancelledAt", "Ledger-close time of the transaction that produced the respective event, null until observed"],
+                ]}
+              />
+              <p>
+                <StatusBadge tone="warning">cancelled is event-only</StatusBadge>{" "}
+                <code>status: &quot;cancelled&quot;</code> is set exclusively by observing a real{" "}
+                <code>Cancelled</code> event; the contract itself writes no corresponding
+                storage flag (see{" "}
+                <a href="#contract-reference" className="text-accent">Contract reference</a>),
+                so this API can never re-derive &quot;cancelled&quot; from a point-in-time
+                on-chain read, only from unbroken event history. A polling outage that outlasts
+                the RPC&apos;s event-retention window before catching back up is the one way a
+                cancellation could be missed; there is no fallback for that case today.
+              </p>
+            </DocsSubsection>
+
             <p>
               A request to an unrecognized route returns <code>404 {"{ \"error\": \"not found\" }"}</code>;
               an unhandled server error returns <code>500 {"{ \"error\": \"internal error\" }"}</code>.
               There is no rate limiting or authentication on these endpoints.
             </p>
             <p>
-              <StatusBadge tone="neutral">scope</StatusBadge> These are the only three
-              endpoints. There is no endpoint for an arbitrary deployed{" "}
-              <strong>PriceFloor</strong> instance, or for deal history: the indexer only
-              watches the Oracle and one fixed, legacy PriceFloor instance configured via its
-              own <code>PRICEFLOOR_CONTRACT_ID</code> (see{" "}
-              <a href="#architecture" className="text-accent">Architecture</a>). A PriceFloor
-              instance deployed through the product&apos;s own deploy flow is not indexed or
-              queryable over REST at all right now, read its state directly from the contract
-              over RPC instead.
+              <StatusBadge tone="neutral">scope</StatusBadge> <code>/api/deals*</code> above is
+              the documented, stable surface for reading the deal registry; an equivalent{" "}
+              <code>/pricefloor-instances*</code> family (same underlying data, same field
+              shape) also exists and is what this product&apos;s own frontend currently calls
+              internally, kept for now rather than migrated in this step so that behavior is
+              unchanged. Neither endpoint exposes anything for a PriceFloor instance that has
+              never been registered with this indexer (see{" "}
+              <a href="#pricefloor" className="text-accent">PriceFloor</a>): read its state
+              directly from the contract over RPC instead in that case.
             </p>
           </DocsSection>
 

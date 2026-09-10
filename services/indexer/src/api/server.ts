@@ -3,6 +3,7 @@ import type { Pool } from "pg";
 import { logger } from "../logger.js";
 import type { IndexerEnv } from "../env.js";
 import { registerInstance } from "../instances.js";
+import { getDealByContractId, isValidContractId, listDeals, parseDealListQuery } from "./deals.js";
 
 interface CommodityRow {
   symbol: string;
@@ -306,6 +307,37 @@ export function createApp(env: IndexerEnv, pool: Pool): express.Express {
       return;
     }
     res.json({ instance: serializePriceFloorInstance(result.rows[0]!) });
+  });
+
+  // Phase 4 Step 5: the canonical, stable Deal API for future frontend
+  // recovery / "My Deals" use, see docs/phase4-step5-deals-api.md. Built
+  // directly on the same pricefloor_instances registry as
+  // /pricefloor-instances above (same data, same allowlist function via
+  // deals.ts's serializeDeal), never a second source of truth. Deliberately
+  // additive: /pricefloor-instances above is untouched so existing frontend
+  // behavior (apps/web/lib/api.ts) is unaffected by this step.
+  app.get("/api/deals", async (req, res) => {
+    const parsed = parseDealListQuery(req.query as Record<string, unknown>);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    const deals = await listDeals(pool, parsed.query);
+    res.json({ deals, limit: parsed.query.limit, offset: parsed.query.offset });
+  });
+
+  app.get("/api/deals/:contractId", async (req, res) => {
+    const { contractId } = req.params;
+    if (!isValidContractId(contractId)) {
+      res.status(400).json({ error: "contractId is not a syntactically valid Soroban contract id" });
+      return;
+    }
+    const deal = await getDealByContractId(pool, contractId);
+    if (!deal) {
+      res.status(404).json({ error: "unknown or unregistered deal" });
+      return;
+    }
+    res.json({ deal });
   });
 
   app.use((req, res) => {
