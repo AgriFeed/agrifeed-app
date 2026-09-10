@@ -31,7 +31,7 @@ export async function isFreighterInstalled(): Promise<boolean> {
 export async function connectFreighter(): Promise<FreighterConnection> {
   const access = await requestAccess();
   if (access.error) {
-    throw new OracleError(`Freighter access denied: ${access.error}`);
+    throw new OracleError(`Freighter access denied: ${access.error.message}`);
   }
 
   return {
@@ -55,7 +55,7 @@ export function freighterSignAndSend(networkPassphrase: string): SignAndSend {
   return async (unsignedXdr: string) => {
     const result = await signTransaction(unsignedXdr, { networkPassphrase });
     if (result.error) {
-      throw new OracleError(`Freighter signing failed: ${result.error}`);
+      throw new OracleError(`Freighter signing failed: ${result.error.message}`);
     }
     return result.signedTxXdr;
   };
@@ -84,7 +84,8 @@ export async function signAuthEntryWithFreighter(
     address: pending.address,
   });
   if (result.error || !result.signedAuthEntry) {
-    throw new OracleError(`Freighter auth entry signing failed for ${pending.address}: ${result.error}`);
+    const reason = result.error?.message ?? "no signed entry was returned";
+    throw new OracleError(`Freighter auth entry signing failed for ${pending.address}: ${reason}`);
   }
   return { address: pending.address, entryXdr: result.signedAuthEntry };
 }
