@@ -134,16 +134,46 @@ describe("readInstanceStorageFields (pure) -- empirically-verified DataKey encod
     const fields = readInstanceStorageFields(storage);
     expect(fields.oracleContractId).toBe(REAL_ORACLE_CONTRACT_ID);
     expect(fields.settlementToken).toBe(REAL_SETTLEMENT_TOKEN);
+    expect(fields.cancelledFlagObserved).toBe(false);
   });
 
-  it("returns nulls for empty or missing storage rather than guessing", () => {
-    expect(readInstanceStorageFields(null)).toEqual({ settlementToken: null, oracleContractId: null });
-    expect(readInstanceStorageFields([])).toEqual({ settlementToken: null, oracleContractId: null });
+  it("returns nulls/false for empty or missing storage rather than guessing", () => {
+    expect(readInstanceStorageFields(null)).toEqual({
+      settlementToken: null,
+      oracleContractId: null,
+      cancelledFlagObserved: false,
+    });
+    expect(readInstanceStorageFields([])).toEqual({
+      settlementToken: null,
+      oracleContractId: null,
+      cancelledFlagObserved: false,
+    });
   });
 
   it("ignores entries that don't match the expected key shape", () => {
     const storage = [storageEntry("Funded", xdr.ScVal.scvBool(false)), storageEntry("Settled", xdr.ScVal.scvBool(false))];
-    expect(readInstanceStorageFields(storage)).toEqual({ settlementToken: null, oracleContractId: null });
+    expect(readInstanceStorageFields(storage)).toEqual({
+      settlementToken: null,
+      oracleContractId: null,
+      cancelledFlagObserved: false,
+    });
+  });
+
+  // Phase 5 Step 6: DataKey::Cancelled, confirmed against a real instance
+  // deployed from the updated wasm (see
+  // docs/phase5-step6-cancelled-state.md) to encode the same way every
+  // other fieldless DataKey variant already does.
+  it("decodes DataKey::Cancelled = true as cancelledFlagObserved", () => {
+    const storage = [storageEntry("Cancelled", xdr.ScVal.scvBool(true))];
+    expect(readInstanceStorageFields(storage).cancelledFlagObserved).toBe(true);
+  });
+
+  it("does not report cancelledFlagObserved for an instance that was never cancelled (key absent)", () => {
+    const storage = [
+      storageEntry("Farmer", nativeToScVal("GCPM65RUTWWMHM2VBCJDLI2CBA3JDPPMG7QGABAW7DYJLLC6NAIIFR62", { type: "address" })),
+      storageEntry("Funded", xdr.ScVal.scvBool(true)),
+    ];
+    expect(readInstanceStorageFields(storage).cancelledFlagObserved).toBe(false);
   });
 });
 

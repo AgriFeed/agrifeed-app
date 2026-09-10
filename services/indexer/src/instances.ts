@@ -149,26 +149,48 @@ export async function registerInstance(env: IndexerEnv, pool: Pool, contractId: 
 export interface InstanceStorageFields {
   settlementToken: string | null;
   oracleContractId: string | null;
+  /**
+   * Whether this instance's own storage carries `DataKey::Cancelled: true`
+   * (Phase 5 Step 6 -- only present at all on an instance deployed from a
+   * wasm built after that change; absent, not `false`, on every instance
+   * deployed before it, including every instance registered before this
+   * step). `false` here means "not observed," never "confirmed not
+   * cancelled": absence of the key is exactly what a never-cancelled
+   * post-Step-6 instance and every pre-Step-6 instance both look like,
+   * which is why this is used only as a diagnostic cross-check (see
+   * `enrichInstanceStorage`), never as a substitute for the real,
+   * event-derived `status` column.
+   */
+  cancelledFlagObserved: boolean;
 }
 
 /**
- * Pure: decodes SettlementToken/Oracle out of a ContractInstance's raw
- * storage entries. Neither field is present in AgriPriceFloor's
- * Initialized event (see docs/phase4-pricefloor-deal-registry.md's Q13),
- * so this reads them from the same instance-storage the contract itself
- * keeps -- not fabricated, and not guessed: the exact encoding used below
- * (a fieldless enum variant like `DataKey::Oracle` becomes
+ * Pure: decodes SettlementToken/Oracle/Cancelled out of a
+ * ContractInstance's raw storage entries. SettlementToken/Oracle are not
+ * present in AgriPriceFloor's Initialized event
+ * (see docs/phase4-pricefloor-deal-registry.md's Q13), so this reads them
+ * from the same instance-storage the contract itself keeps -- not
+ * fabricated, and not guessed: the exact encoding used below (a fieldless
+ * enum variant like `DataKey::Oracle` becomes
  * `ScVal::Vec([ScVal::Symbol("Oracle")])`) was empirically confirmed
- * against a real deployed AgriPriceFloor instance during this step (see
- * the implementation report), not assumed from soroban-sdk's general
- * derive-macro conventions alone. An entry whose key doesn't match this
- * exact shape is skipped, never partially trusted.
+ * against a real deployed AgriPriceFloor instance during Phase 4 Step 2
+ * (see that step's implementation report), not assumed from soroban-sdk's
+ * general derive-macro conventions alone. `Cancelled` (Phase 5 Step 6)
+ * decodes the same way, confirmed against a real instance deployed from
+ * the updated wasm (see docs/phase5-step6-cancelled-state.md). An entry
+ * whose key doesn't match one of these exact shapes is skipped, never
+ * partially trusted.
  */
 export function readInstanceStorageFields(storage: readonly xdr.ScMapEntry[] | null | undefined): InstanceStorageFields {
-  const fields: InstanceStorageFields = { settlementToken: null, oracleContractId: null };
+  const fields: InstanceStorageFields = { settlementToken: null, oracleContractId: null, cancelledFlagObserved: false };
   for (const entry of storage ?? []) {
     const decodedKey = scValToNative(entry.key);
     const name = Array.isArray(decodedKey) ? decodedKey[0] : decodedKey;
+    if (name === "Cancelled") {
+      const decodedValue = scValToNative(entry.val);
+      if (decodedValue === true) fields.cancelledFlagObserved = true;
+      continue;
+    }
     if (name !== "Oracle" && name !== "SettlementToken") continue;
     const decodedValue = scValToNative(entry.val);
     if (typeof decodedValue !== "string") continue;
@@ -186,6 +208,22 @@ export function readInstanceStorageFields(storage: readonly xdr.ScMapEntry[] | n
  * still missing these fields. Never overwrites an already-populated value
  * (COALESCE), and never writes a partial/guessed value: a lookup failure
  * just leaves the fields NULL for the next poll to retry.
+ *
+ * Also takes this same, already-paid-for RPC round trip as an opportunity
+ * for one diagnostic cross-check (Phase 5 Step 6): if the instance's own
+ * storage says `DataKey::Cancelled: true` but this row's indexed `status`
+ * is not already `'cancelled'`, that is a real, actionable signal that a
+ * `Cancelled` event was missed (the one gap
+ * docs/phase4-step4-lifecycle-and-decision.md's Q14 already described),
+ * so it is logged loudly rather than silently ignored. `status` itself is
+ * never written from this check: cancellation remains exclusively
+ * event-derived (see `poll.ts`'s `handleEvent`), this is observability
+ * only, not a second way to set it. This check only ever runs once per
+ * instance (enrichment stops once settlement_token/oracle are both known,
+ * see `loadInstancesNeedingEnrichment`), so it is a real but incomplete
+ * safety net, not comprehensive ongoing reconciliation -- see
+ * docs/phase5-step6-cancelled-state.md for why a fuller version was
+ * deliberately deferred rather than built speculatively here.
  */
 export async function enrichInstanceStorage(env: IndexerEnv, pool: Pool, contractId: string): Promise<void> {
   const server = new StellarRpc.Server(env.rpcUrl);
@@ -197,6 +235,20 @@ export async function enrichInstanceStorage(env: IndexerEnv, pool: Pool, contrac
     return;
   }
   const fields = readInstanceStorageFields(instance.storage);
+
+  if (fields.cancelledFlagObserved) {
+    const current = await pool.query<{ status: string }>(`SELECT status FROM pricefloor_instances WHERE contract_id = $1`, [
+      contractId,
+    ]);
+    const status = current.rows[0]?.status;
+    if (status !== undefined && status !== "cancelled") {
+      logger.warn(
+        "enrichInstanceStorage: instance storage says Cancelled=true but indexed status disagrees -- a Cancelled event may have been missed",
+        { contractId, indexedStatus: status },
+      );
+    }
+  }
+
   if (!fields.settlementToken && !fields.oracleContractId) return;
   await pool.query(
     `UPDATE pricefloor_instances
