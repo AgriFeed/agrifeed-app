@@ -7,6 +7,7 @@ import type { PendingAuthEntry } from "@agrifeed/sdk";
 import { connectFreighter, freighterSignAndSend, getConnectedAddress, signAuthEntryAsExpectedParty } from "@agrifeed/sdk/wallet";
 import { networkPassphrase, oracleContractId, pricefloorContractId, pricefloorWasmHash, rpcUrl } from "@/lib/stellar";
 import { withCapturedTxHash } from "@/lib/txHash";
+import { registerPriceFloorInstance } from "@/lib/api";
 import {
   canDeploy,
   canPrepareInitialize,
@@ -119,6 +120,8 @@ export function NewDealFlow({ onDealConfirmed }: { onDealConfirmed: (contractId:
   const [state, dispatch] = useReducer(dealReducer, initialDealState);
   const { commodities, loading: commoditiesLoading, error: commoditiesError } = useCommodities();
   const { decimals: oracleDecimals, error: decimalsError } = useOracleDecimals();
+  const [registration, setRegistration] = useState<RegistrationStatus>("idle");
+  const [registrationError, setRegistrationError] = useState<string | null>(null);
 
   useEffect(() => {
     if (state.status === "confirmed" && state.contractId) {
@@ -128,6 +131,36 @@ export function NewDealFlow({ onDealConfirmed }: { onDealConfirmed: (contractId:
     // contract id, not on every parent re-render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.status, state.contractId]);
+
+  // Registration (Phase 4) lives here, in the parent, not in InstanceChoice
+  // (where the deploy button itself lives): InstanceChoice unmounts the
+  // moment `state.status` moves past "draft", which happens immediately
+  // on a successful deploy, before this async call has any chance to
+  // resolve — confirmed live, the status note was simply never rendered
+  // when it lived there. Guarded by `state.contractId` alone (not status),
+  // so it fires exactly once per newly deployed contract id and keeps
+  // running, and its result stays visible, across every later step.
+  useEffect(() => {
+    if (!state.contractId || state.status === "draft") return;
+    let cancelled = false;
+    setRegistration("pending");
+    setRegistrationError(null);
+    registerPriceFloorInstance(state.contractId)
+      .then(() => {
+        if (!cancelled) setRegistration("registered");
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setRegistration("failed");
+        setRegistrationError(err instanceof Error ? err.message : "registration failed");
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Only re-run for a genuinely new contract id, not on every status
+    // change within the same deal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.contractId]);
 
   const showSigning = state.status === "waiting_for_farmer" || state.status === "waiting_for_buyer" || state.status === "ready_to_submit";
 
@@ -140,7 +173,17 @@ export function NewDealFlow({ onDealConfirmed }: { onDealConfirmed: (contractId:
             instance <IdentifierDisplay kind="contract" value={state.contractId} />
           </span>
         )}
+        {registration === "pending" && <StatusBadge tone="pending">registering for discovery…</StatusBadge>}
+        {registration === "registered" && <StatusBadge tone="success">registered for discovery</StatusBadge>}
+        {registration === "failed" && <StatusBadge tone="warning">not registered for discovery</StatusBadge>}
       </div>
+
+      {registration === "failed" && (
+        <p className="text-xs text-ink-muted">
+          {registrationError}. The deal itself is real and on-chain regardless, this only means it will
+          not be automatically discoverable later, save the contract ID above if you need it again.
+        </p>
+      )}
 
       {state.contractId && state.status !== "confirmed" && (
         <DealPersistenceNotice contractId={state.contractId} />
@@ -405,6 +448,8 @@ function DealSummary({
   );
 }
 
+type RegistrationStatus = "idle" | "pending" | "registered" | "failed";
+
 function InstanceChoice({ state, dispatch }: { state: DealState; dispatch: React.Dispatch<DealAction> }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -425,6 +470,12 @@ function InstanceChoice({ state, dispatch }: { state: DealState; dispatch: React
         connection.publicKey,
         signAndSend,
       );
+      // Registration for discovery (Phase 4) is handled by NewDealFlow's
+      // own effect on state.contractId, not here: this component unmounts
+      // the moment state.status moves past "draft" (which DEPLOY_SUCCESS
+      // triggers immediately below), before an async call started here
+      // could ever resolve or have its result seen -- confirmed live, see
+      // NewDealFlow's own comment on that effect.
       dispatch({ type: "DEPLOY_SUCCESS", contractId });
     } catch (err) {
       const message = err instanceof Error ? err.message : "deployment failed";

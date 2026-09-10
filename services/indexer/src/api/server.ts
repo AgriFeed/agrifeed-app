@@ -70,6 +70,26 @@ export function createApp(env: IndexerEnv, pool: Pool): express.Express {
   const app = express();
   app.use(express.json());
 
+  // Every route here is public, unauthenticated, read-only-or-RPC-verified
+  // data (no rate limiting or auth exists on any of them, see the /docs
+  // page's own REST API section), so a permissive CORS policy widens no
+  // real attack surface: POST /pricefloor-instances in particular never
+  // trusts the request body as fact regardless of origin, it independently
+  // verifies over RPC before persisting anything (see instances.ts).
+  // Needed because this is the first indexer endpoint a browser calls
+  // directly rather than through a Next.js Server Component (which has no
+  // CORS restriction, being server-to-server) -- confirmed live during
+  // Phase 4 Step 3: the browser's own fetch to POST /pricefloor-instances
+  // failed until this was added, plain `express()` sends no CORS headers
+  // by default.
+  app.use((_req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    next();
+  });
+  app.options("*", (_req, res) => res.sendStatus(204));
+
   app.get("/health", async (_req, res) => {
     res.json({
       ok: true,
