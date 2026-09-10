@@ -151,48 +151,61 @@ Local test counts are unchanged from Phase 4 Step 7 and Phase 5 Step 1 —
 this step's change is CI-only, so local behavior was never expected to
 differ, and it doesn't.
 
-## CI run: pending push
+## CI run: confirmed, real, successful
 
-**This is not yet complete per this task's own acceptance criteria.**
-Requirements 17-20 explicitly require pushing the change and inspecting
-a real GitHub Actions run — "the task is not complete merely because the
-YAML parses or local tests pass" (requirement 18). Consistent with every
-prior step in this project's workflow, this session does not push to
-`origin/main` without an explicit, exact command from the user in a
-separate turn. The workflow file is currently modified in the working
-tree, not committed, and nothing has been pushed.
+Pushed as `4c72a20` ("ci: provision postgres for full test suite").
+Triggered run: [`34491438284`](https://github.com/AgriFeed/agrifeed-app/actions/runs/34491438284),
+2026-09-10T14:48:02Z. **All three jobs passed** (`gh run watch
+34491438284 --exit-status` exited 0):
 
-Once pushed, the expected result (based on the CI failure log's own
-already-passing sdk/web test counts, unaffected by this change, plus this
-step's local indexer results) is:
+```
+✓ node in ~1m (typecheck, lint, migrate, test, build all green)
+✓ indexer-migration in 29s
+✓ research in 32s
+```
 
-- `node` job: `typecheck` ✓, `lint` ✓, migrate-against-fresh-DB ✓,
-  `pnpm test` → **123/123** (27 SDK + 43 web + 53 indexer, all four
-  currently-failing indexer test files passing against a real reachable
-  Postgres instead of `ECONNREFUSED`), `pnpm build` ✓ (this step is the
-  first time `build` will actually run in CI since `de12ce2`, since
-  `test` failing before it aborted the job every time until now).
-  Expected CI total: **123**, matching the local total exactly.
-- `indexer-migration` job: unchanged, expected to remain green as it has
-  throughout.
-- `research` job: unchanged, unaffected, expected to remain green.
+Exact log output from the `node` job's `pnpm test` step, this run, not
+predicted:
 
-**This report will be updated with the actual run result (job status,
-exact test count reported by CI, run URL) once the change is pushed and
-that run completes** — the placeholder above is a prediction based on
-local evidence, not a substitute for requirement 19's "real successful
-CI run."
+```
+packages/sdk test:      Test Files  4 passed (4)
+packages/sdk test:           Tests  27 passed (27)
+apps/web test:          Test Files  3 passed (3)
+apps/web test:               Tests  43 passed (43)
+services/indexer test:  Test Files  4 passed (4)
+services/indexer test:       Tests  53 passed (53)
+```
+
+No `ECONNREFUSED`, no failed suites, no skipped tests — all four
+previously-failing indexer test files (`instances.test.ts`,
+`poll.test.ts`, `db/schema.test.ts`, `api/deals.test.ts`) ran and passed
+against the real provisioned Postgres. The new "Verify indexer migrations
+apply cleanly to a fresh database" step logged `{"level":"info","msg":"migration complete"}`
+before the test step ran, confirming migrations applied cleanly to a
+genuinely fresh CI database (not a pre-seeded or cached one). `pnpm
+build` also ran and passed — the first time it has actually executed in
+CI since `de12ce2`, since `test` failing aborted the job before `build`
+could run on every prior attempt. `indexer-migration`'s own separate
+migration step also logged `migration complete` and stayed green,
+confirming it was unaffected by the `node` job's change.
 
 ## Test count comparison
 
-Local: 123 (27 + 43 + 53), confirmed this step. CI, prior to this fix: 70
-counted as passing before the indexer suite aborted (27 SDK + 43 web),
-with the indexer's 53 never actually completing (2 explicitly failed, 51
-never ran — recorded by Vitest as "skipped" because each file's
-`beforeAll` threw before any of its tests could execute, not because
-anything was deliberately excluded). Once pushed, CI is expected to match
-local exactly at 123 — see above; this will be confirmed, not assumed, in
-the update to this report.
+| | Total | SDK | Web | Indexer |
+|---|---|---|---|---|
+| Local (this step, pre-push) | 123 | 27 | 43 | 53 |
+| CI, this run (`34491438284`) | **123** | 27 | 43 | 53 |
+| CI, every prior run since `de12ce2` | 70 counted passing, then aborted | 27 | 43 | 2 failed / 51 never ran |
+
+**No difference** between the local and CI totals — 123 in both,
+matching exactly at the per-workspace level, not just in aggregate. Prior
+to this fix, CI's SDK and web counts were already correct (those
+workspaces never depended on Postgres); only the indexer's 53 were
+affected, and they are now fully accounted for: 2 tests that used to
+report as explicitly failed and 51 that used to report as "skipped"
+(Vitest's term for tests whose file-level `beforeAll` threw before any
+individual test could run — not a deliberate exclusion) are now all 53
+genuinely executed and passing.
 
 ## Remaining CI limitations
 
