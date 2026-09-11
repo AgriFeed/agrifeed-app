@@ -196,12 +196,27 @@ percentage. What is actually covered, stated plainly instead:
 
 ## CI evidence
 
-Pushed as `<to be filled in after push>`. Verified via `gh run watch`:
-`node` job (typecheck, lint, the indexer's Postgres-backed migrate step,
-`pnpm test` including `services/node-relayer`'s new suite, `pnpm build`),
-`indexer-migration`, and `research` jobs all green, with the real test
-count (194) visible in the job's own log output, confirming no test was
-silently skipped in CI.
+Pushed as `cfde665`. Real GitHub Actions run
+[`34577096104`](https://github.com/AgriFeed/agrifeed-app/actions/runs/34577096104) —
+all three jobs passed: `node` (1m53s), `research` (39s),
+`indexer-migration` (32s). Exact log output from the `node` job's `pnpm
+test` step, this run, not predicted:
+
+```
+packages/sdk test:      Test Files  5 passed (5)
+packages/sdk test:           Tests  41 passed (41)
+apps/web test:          Test Files  3 passed (3)
+apps/web test:               Tests  43 passed (43)
+services/indexer test:  Test Files  4 passed (4)
+services/indexer test:       Tests  55 passed (55)
+services/node-relayer test:  Test Files  7 passed (7)
+services/node-relayer test:       Tests  55 passed (55)
+```
+
+`services/node-relayer` reports exactly **55**, confirming the
+`tsconfig.build.json` fix (double-counting to 110) holds in the real CI
+environment, not just locally. No test was skipped anywhere; `pnpm
+build` also completed successfully as part of the same job.
 
 ## Remaining untested behavior
 
