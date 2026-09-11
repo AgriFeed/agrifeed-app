@@ -99,11 +99,28 @@ data isolation in product claims.
   CI/build).
 - **Live Testnet evidence**: a real instance was deployed from the *updated*
   wasm (hash `5d99a31e...`, vs. old `05faa570...`), with real deploy/init tx
-  hashes, and RPC-reconfirmed. **This audit did not independently re-verify
-  whether the production `PRICEFLOOR_WASM_HASH` config has since been cut
-  over to the new hash** — Step 6 explicitly left it on the old hash. Treat
-  the wasm cutover as an **open item requiring confirmation**, not resolved
-  by this audit.
+  hashes, and RPC-reconfirmed.
+- **PriceFloor WASM cutover — CONFIRMED NOT DONE.** `~/agrifeed-app/.env.local`
+  currently sets:
+  ```
+  PRICEFLOOR_WASM_HASH=05faa5704ac6f8fe0d21268b16782315a6573946bc6ab40b8277faf70eb43d53
+  ```
+  This is the **previous** PriceFloor wasm hash, not the Step 6
+  Cancelled-flag-bearing hash (`5d99a31e...`). The running
+  `agrifeed-app`/indexer configuration has **not** cut over to the new wasm.
+  This is a confirmed deployment/configuration gap, distinct across four
+  separate stages: (1) the contract fix itself is implemented and tested
+  (§2, §4 above); (2) the new wasm has been built and deployed to Testnet as
+  a standalone instance (Step 6's real deploy/init evidence, above); (3) the
+  application's *configured* wasm hash still points at the old build, as
+  shown by the `.env.local` value above; (4) consequently, no live
+  production/runtime use of the new wasm exists — any PriceFloor instance
+  the running app would register or operate against today is still built
+  from the old wasm. **This is not a bug or failure in the implementation
+  itself** — the contract fix and its tests are correct — it is an
+  incomplete deployment cutover. Until `PRICEFLOOR_WASM_HASH` is updated,
+  the indexer's `Cancelled` storage diagnostic (§6) cannot observe the new
+  flag on any instance operated under the current configuration.
 - **Live `cancel()` status — NOT FOUND.** No tx hash, log, or doc in either
   repository records an actual on-chain `cancel()` invocation. All
   `Cancelled`-flag evidence is `env.as_contract()` unit-test storage
@@ -342,7 +359,7 @@ Not found / not real Testnet evidence:
 | E. node-relayer external data dependencies | FAO/IMF are real external HTTP/bulk-CSV sources; AMIS is diagnostic-only by design. Per-commodity failure isolation confirmed. | **ACCEPTED LIMITATION** (working as designed) |
 | F. `.env.local` / indexer restart-configuration gap | Referenced in three prior Phase 4/5 docs; not independently re-verified this audit. | **UNVERIFIED** (carried forward, not re-confirmed or refuted) |
 | G. Indexer doc comment staleness (`deals.ts`) | Comment still claims no `Cancelled` storage flag exists; flag was added in Step 6. Functional conclusion still correct. | **P2** (new issue found this audit) |
-| H. PriceFloor WASM cutover status | Step 6 explicitly left production `PRICEFLOOR_WASM_HASH` on the old hash; this audit did not independently re-verify current config value. | **UNVERIFIED** — requires explicit follow-up confirmation before claiming the new Cancelled-flag wasm is live in any deployed environment |
+| H. PriceFloor WASM cutover status | `.env.local`'s `PRICEFLOOR_WASM_HASH` is confirmed set to `05faa5704ac6f8fe0d21268b16782315a6573946bc6ab40b8277faf70eb43d53` — the previous hash, not Step 6's Cancelled-flag-bearing hash (`5d99a31e...`). The new wasm is built and Testnet-deployed as a standalone instance, but the running app/indexer configuration has not cut over to it. | **CONFIRMED — cutover not done.** Incomplete deployment/configuration step, not a defect in the contract fix or its tests. |
 | I. Frontend route-naming mapping (Markets/Price Protection) | No routes found by these exact names; likely sections of existing pages. Not confirmed as a defect. | **UNVERIFIED** |
 | J. Frontend accessibility | Only a shallow spot check performed; no full a11y audit. | **UNVERIFIED** |
 | K. `/api/deals` is public-data filtering, not per-user auth | Correct-by-design for public blockchain data, but should not be marketed as private isolation. | **ACCEPTED LIMITATION** (precision note, not a defect) |
@@ -361,10 +378,12 @@ behavior.
 
 ## 14. Recommended next action
 
-1. Confirm the current `PRICEFLOOR_WASM_HASH` production/deployment config
-   value (item H) and record explicitly whether the Cancelled-flag-bearing
-   wasm is live anywhere, before making any claim about the Cancelled
-   diagnostic being active in a running deployment.
+1. Cut over `PRICEFLOOR_WASM_HASH` in `.env.local` (and any other deployed
+   configuration) from the confirmed-current old hash
+   (`05faa5704ac6f8fe0d21268b16782315a6573946bc6ab40b8277faf70eb43d53`) to
+   the Step 6 Cancelled-flag-bearing hash (`5d99a31e...`) before making any
+   claim about the Cancelled diagnostic being active in a running
+   deployment (item H).
 2. Correct the stale doc comment in `services/indexer/src/api/deals.ts`
    (item G) — low effort, no behavior change.
 3. When a real Freighter-capable browser environment becomes available,
@@ -399,10 +418,13 @@ and should be resolved or explicitly accepted before any claim of
 - Freighter/browser wallet integration remains UNVERIFIED end-to-end (item A).
 - Live `cancel()` has never been executed on Testnet (item B).
 - `submit.ts`'s SDK-lifecycle duplication remains unresolved (item D).
-- The PriceFloor WASM cutover status is unconfirmed by this audit (item H).
+- The PriceFloor WASM cutover is confirmed **not done** — the running
+  configuration still points at the old wasm hash (item H).
 
 None of these represent a security, correctness, reliability, or
 data-integrity defect in the code as written — they are verification gaps
-and one deliberately deferred hardening item. This is precisely the profile
-of a **CONDITIONAL PASS**: proceed, but address or explicitly accept items
-A, B, D, and H before making the specific claims they gate.
+and one deliberately deferred hardening item, plus one confirmed but
+non-security deployment/configuration gap (item H) that is straightforward
+to close. This is precisely the profile of a **CONDITIONAL PASS**: proceed,
+but address or explicitly accept items A, B, D, and H before making the
+specific claims they gate.
