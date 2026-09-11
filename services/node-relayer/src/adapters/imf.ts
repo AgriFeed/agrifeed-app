@@ -114,8 +114,9 @@ export async function fetchImfPrice(commodity: string): Promise<SourcePrice> {
   };
 }
 
-/** PCPS monthly periods look like "2026-M07". */
-function parsePcpsPeriod(period: string): Date {
+/** PCPS monthly periods look like "2026-M07". Exported for direct testing
+ * (Phase 5 Step 7): the real format-validation risk in this adapter. */
+export function parsePcpsPeriod(period: string): Date {
   const match = /^(\d{4})-M(\d{2})$/.exec(period);
   if (!match || !match[1] || !match[2]) {
     throw new SourceUnavailableError("IMF", `unrecognized TIME_PERIOD format "${period}"`);

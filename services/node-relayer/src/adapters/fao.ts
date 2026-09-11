@@ -65,7 +65,11 @@ export async function fetchFaoPrice(commodity: string): Promise<SourcePrice> {
   return fetchFromBulkCsv(commodity, reference);
 }
 
-async function tryClassicApi(
+/** Exported for direct testing (Phase 5 Step 7) via a stubbed `fetch`,
+ * the same boundary-stub convention apps/web's own api.test.ts already
+ * uses -- this is the real decision logic (parse the response, fall back
+ * to null on any failure), not a network integration test. */
+export async function tryClassicApi(
   commodity: string,
   reference: { area: string; item: string },
 ): Promise<SourcePrice | null> {
@@ -132,8 +136,10 @@ async function ensureBulkCsvCached(): Promise<void> {
 
 /** Splits one FAOSTAT normalized-CSV row. Every field is quoted and
  * comma-separated with no escaped quotes in this file, confirmed against
- * a real download, so a plain split on `","` is sufficient here. */
-function splitFaoRow(line: string): string[] {
+ * a real download, so a plain split on `","` is sufficient here. Exported
+ * for direct testing (Phase 5 Step 7): the actual parsing risk in this
+ * adapter is here, not in the network fetch around it. */
+export function splitFaoRow(line: string): string[] {
   return line.slice(1, -1).split('","');
 }
 
