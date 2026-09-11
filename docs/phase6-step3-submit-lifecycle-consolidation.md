@@ -281,10 +281,30 @@ explained above.
 
 ## CI evidence
 
-Commit `<pending>` (`refactor(node-relayer): reuse shared transaction
-lifecycle`), pushed to `origin/main`. Real GitHub Actions run recorded
-here once pushed, matching this project's established pattern of never
-predicting CI results before they exist.
+Commit `79e9373` (`refactor(node-relayer): reuse shared transaction
+lifecycle`), pushed to `origin/main`.
+
+Run: https://github.com/AgriFeed/agrifeed-app/actions/runs/34585576369
+(run ID `34585576369`)
+
+| Job | Result | Duration |
+| --- | --- | --- |
+| `node` (typecheck, lint, migrations-apply-cleanly, full test suite, build) | ✅ success | 1m55s |
+| `research` | ✅ success | 40s |
+| `indexer-migration` | ✅ success | 35s |
+
+Exact test counts pulled from the `node` job's own log — no skipped
+node-relayer tests, matching the local run exactly:
+
+```
+packages/sdk test:          Tests  41 passed (41)
+apps/web test:               Tests  43 passed (43)
+services/indexer test:       Tests  60 passed (60)
+services/node-relayer test:  Tests  62 passed (62)
+```
+
+41 + 43 + 60 + 62 = **206 tests**, all passing, all three required jobs
+green.
 
 ## Remaining limitations
 
