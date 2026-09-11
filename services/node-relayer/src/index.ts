@@ -7,6 +7,7 @@ import { fetchImfPrice } from "./adapters/imf.js";
 import { fetchAmisPrice } from "./adapters/amis.js";
 import { aggregatePrice } from "./normalize/aggregate.js";
 import { submitPrice } from "./submit/submit.js";
+import { logSubmitFailure } from "./submitFailureLog.js";
 
 const ADAPTERS = [fetchFaoPrice, fetchImfPrice, fetchAmisPrice];
 
@@ -27,10 +28,7 @@ async function tick(env: ReturnType<typeof loadEnv>, decimals: number): Promise<
         sources: aggregated.contributingSources,
       });
     } catch (err) {
-      logger.error("failed to submit price, skipping this commodity this cycle", {
-        commodity,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logSubmitFailure(err, commodity);
     }
   }
 }

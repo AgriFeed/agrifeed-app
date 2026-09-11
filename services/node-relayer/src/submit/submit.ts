@@ -1,13 +1,5 @@
-import {
-  Contract,
-  Keypair,
-  Networks,
-  nativeToScVal,
-  rpc as StellarRpc,
-  TransactionBuilder,
-  xdr,
-} from "@stellar/stellar-sdk";
-import { OracleError } from "@agrifeed/sdk";
+import { Contract, Keypair, Networks, nativeToScVal, rpc as StellarRpc, TransactionBuilder, xdr } from "@stellar/stellar-sdk";
+import { refreshTimeBounds, submitAndConfirm } from "@agrifeed/sdk";
 import { logger } from "../logger.js";
 
 function assetToScVal(symbol: string): xdr.ScVal {
@@ -22,10 +14,31 @@ export interface SubmitConfig {
   oracleContractId: string;
 }
 
-/** Signs and submits one submit_price call with the node's own keypair,
- * then polls until it lands. Mirrors packages/sdk/src/pricefloor.ts's
- * invokeAndConfirm, but signs with a server-held Keypair instead of
- * Freighter, since this runs unattended with no browser involved. */
+/**
+ * Signs and submits one submit_price call with the node's own keypair,
+ * then polls until it lands. Builds the transaction itself (Oracle's
+ * `submit_price` shape is node-relayer's own concern, not the SDK's), but
+ * reuses the SDK's shared write-path primitives (`refreshTimeBounds`,
+ * `submitAndConfirm`, packages/sdk/src/soroban-tx.ts) for everything after
+ * simulation -- the same freshen-then-submit-then-poll lifecycle every
+ * other write path in this project already uses, instead of a second,
+ * independently-maintained copy of it (see
+ * docs/phase6-step2-submit-lifecycle-audit.md, decision: CONSOLIDATE).
+ *
+ * Signs directly with a server-held `Keypair`, unlike
+ * packages/sdk/src/pricefloor.ts's `invokeAndConfirm` (which signs via a
+ * `SignAndSend` callback across a Freighter/browser-extension boundary,
+ * needing an XDR string round trip): no wallet is involved here, so
+ * `.sign(keypair)` is called directly on the `Transaction` object
+ * `refreshTimeBounds` returns, one step simpler than the browser path.
+ *
+ * Deliberately does NOT reuse `invokeAndConfirm` itself, only the two
+ * lower-level primitives it's built from: `invokeAndConfirm`'s
+ * `friendlyContractError` maps `agripricefloor`'s own error-code enum to
+ * human messages, which would be wrong for AgriFeedOracle's entirely
+ * different error enum (see the audit's "D. Node-relayer-specific
+ * requirements").
+ */
 export async function submitPrice(
   config: SubmitConfig,
   keypair: Keypair,
@@ -54,25 +67,17 @@ export async function submitPrice(
     .build();
 
   const prepared = await server.prepareTransaction(built);
-  prepared.sign(keypair);
+  // Freshen the signing window right before signing, exactly as every
+  // other write path in this project does (Phase 5 Step 4) -- unlike
+  // those paths there is no human approval delay here, but this still
+  // narrows the window that can elapse between simulation and submission
+  // to a transient RPC/network slowdown, and (via submitAndConfirm below)
+  // makes that specific failure diagnosable if it ever happens instead of
+  // indistinguishable from every other rejection reason.
+  const readyToSign = refreshTimeBounds(prepared);
+  readyToSign.sign(keypair);
 
-  const sendResult = await server.sendTransaction(prepared);
-  if (sendResult.status === "ERROR") {
-    throw new OracleError(`submit_price(${commodity}) rejected: ${JSON.stringify(sendResult.errorResult)}`);
-  }
-
-  const hash = sendResult.hash;
-  for (let attempt = 0; attempt < 20; attempt++) {
-    const result = await server.getTransaction(hash);
-    if (result.status === StellarRpc.Api.GetTransactionStatus.SUCCESS) {
-      logger.info("submit_price confirmed", { commodity, hash, rawPrice });
-      return;
-    }
-    if (result.status === StellarRpc.Api.GetTransactionStatus.FAILED) {
-      throw new OracleError(`submit_price(${commodity}) failed on-chain: ${hash}`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-  }
-
-  throw new OracleError(`submit_price(${commodity}) transaction ${hash} did not confirm in time`);
+  const hash = Buffer.from(readyToSign.hash()).toString("hex");
+  await submitAndConfirm(server, readyToSign, `submit_price(${commodity})`);
+  logger.info("submit_price confirmed", { commodity, hash, rawPrice });
 }
