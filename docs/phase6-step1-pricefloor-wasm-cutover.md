@@ -271,10 +271,30 @@ instances) — no deal disappeared, no status regressed, no field was lost.
 
 ## CI evidence
 
-Pushed alongside this report; see the commit's real GitHub Actions run
-(recorded here once pushed — this section is completed as part of the
-push step, matching this project's established pattern of never
-predicting CI results before they exist).
+Commit `c97c39f` (`feat(config): cut over to cancelled-aware pricefloor
+wasm`), pushed to `origin/main`.
+
+Run: https://github.com/AgriFeed/agrifeed-app/actions/runs/34582767765
+(run ID `34582767765`)
+
+| Job | Result | Duration |
+| --- | --- | --- |
+| `node` (typecheck, lint, migrations-apply-cleanly, full test suite, build) | ✅ success | 2m1s |
+| `research` | ✅ success | 35s |
+| `indexer-migration` | ✅ success | 35s |
+
+Exact test counts pulled from the `node` job's own log, confirming the
+5 new cutover tests landed and everything else stayed green:
+
+```
+packages/sdk test:       Tests  41 passed (41)
+apps/web test:            Tests  43 passed (43)
+services/indexer test:    Tests  60 passed (60)
+services/node-relayer test: Tests  55 passed (55)
+```
+
+41 + 43 + 60 + 55 = **199 tests**, matching the local run exactly (indexer
+55 → 60, +5 new real-Testnet cutover tests; nothing else changed).
 
 ## Compatibility analysis (carried forward, re-confirmed unchanged)
 
